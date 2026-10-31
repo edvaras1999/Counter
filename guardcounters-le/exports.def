@@ -1,0 +1,4 @@
+LIBRARY	"GuardCountersLE"
+EXPORTS
+SKSEPlugin_Query
+SKSEPlugin_Load
