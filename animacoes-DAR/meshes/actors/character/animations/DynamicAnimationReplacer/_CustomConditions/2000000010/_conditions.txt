@@ -1,0 +1,3 @@
+IsActorValueEqualTo(77, 1) AND
+IsActorBase("Skyrim.esm"|0x00000007) AND
+IsEquippedRightType(1)

@@ -1,58 +1,56 @@
-GUARD COUNTERS LE - VERSAO 0.1 (primeira versao de teste)
-Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE, so MCO, com o Inpa Sekiro.
-A DLL original nao tem codigo-fonte: esta e uma reescrita do comportamento descrito na pagina do mod.
+GUARD COUNTERS LE - VERSAO 0.2
+Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE, so MCO, com o Inpa Sekiro,
+usando o Themis (OAR/DAR do LE).
 
-COMO FUNCIONA
- 1. Bloqueia com o Inpa Sekiro. Quando o deflect resulta, o Inpa poe a variavel de animacao "bNoStagger" do jogador
-    a TRUE (script zzzSekiro_player_parry3). Esse e o gatilho. Exige-se que estivesse a bloquear ("isBlocking")
-    no ultimo segundo, para nao confundir com outros mods.
- 2. A DLL poe GuardCounters_Trigger = 1 durante WindowSeconds (1,5 s). E a variavel que o Behavior Data Injector cria
-    (GuardCounters_BDI.json) e o Open Animation Replacer le nas condicoes das animacoes de counter.
- 3. Se carregar em atacar ("Right Attack/Block") dentro da janela: cobra a estamina (StaminaCost) e mantem a variavel a 1
-    ate o golpe comecar e acabar (maximo ArmedHoldSeconds). O OAR escolhe a animacao de counter. Ataque normal ou forte.
- 4. Fora da janela, ou depois do golpe, a variavel volta a 0 e o ataque e o normal do MCO.
+O QUE MUDOU NA 0.2
+ O teste da 0.1 mostrou que a DLL funciona (deflect detetado, janela aberta, estamina cobrada, golpe iniciado) mas o
+ Themis nao trocou a animacao: as condicoes OAR do pacote dependem de uma variavel de grafo (GuardCounters_Trigger),
+ e o Themis nao tem avaliador para isso (suspeita, ainda por confirmar no log do parser).
+ Agora a DLL tambem poe um VALOR DE ATRIBUTO do jogador a 1 durante a janela (SignalActorValue, por omissao 77 =
+ Variable10), e as animacoes passam a DAR com a condicao IsActorValueEqualTo(77, 1), que o Themis avalia
+ (o teu log mostra-o a ler atributos do jogador sem erro).
+ - Na arrancada (primeiro evento de input) a DLL faz um auto-teste: le o atributo, sobe +1, le, desce -1, e descobre
+   que modificador funciona (temporario, dano ou permanente). Se o atributo nao estiver a 0 (outro mod o usa),
+   desliga o sinal e avisa no log; nesse caso escolha outro SignalActorValue e gere de novo as pastas DAR.
+ - Se um save foi feito com o sinal a 1, o auto-teste limpa-o ao carregar.
 
-O QUE ESTA NESTA VERSAO / O QUE FICA PARA DEPOIS
- Tem: deteccao do deflect, janela, troca da animacao, custo de estamina, cooldown, INI, log de validacao.
- Super armor: ja a da o proprio Inpa (bNoStagger fica a TRUE 1,5 a 4,2 s apos o deflect).
- Fica para as versoes seguintes, porque precisam de hooks de dano/golpe que nao se podem escrever sem testar no jogo:
- invencibilidade, stagger forcado do inimigo, brilho, sons e menu proprio (MCM).
+O QUE ENTREGO (so o que mudou ou e novo)
+ guardcounters-le\Counter.cpp, GuardCountersLE.cpp   (alterados: compilar no Actions como antes)
+ GuardCounters.ini                                   (2 chaves novas em [LE]; vai para Data\SKSE\Plugins\)
+ tools\make_dar.py                                   (novo: gera as pastas DAR a partir das configs OAR)
+ animacoes-DAR\meshes\...\DynamicAnimationReplacer\_CustomConditions\<prioridade>\  (13 pastas, novas)
+   Copie a pasta "meshes" para dentro do mod "Guard Counters For BFCO And MCO V" (ao lado da pasta meshes que ja la esta).
+   Recomendo apagar do mod a pasta OpenAnimationReplacer\GuardCountersMCO: as condicoes OAR ficam ignoradas pelo Themis e
+   so poluem o log. As animacoes e o BDI.json (GuardCounters_BDI.json) mantem-se.
 
-REQUISITOS (LE): SKSE 1.7.3, Open Animation Replacer e Behavior Data Injector (versoes LE), MCO, Inpa Sekiro LE
- (com a opcao de stagger de melee ligada no MCM do Inpa: e ela que faz o Inpa marcar o deflect),
- e a tua pasta de animacoes convertidas (Guard Counters For BFCO And MCO V).
-
-FICHEIROS (repositorio novo)
- .github\workflows\build-guardcounters-le.yml
- guardcounters-le\ : GuardCountersLE.cpp, Counter.cpp, Counter.h, GuardCountersLE.vcxproj, GuardCountersLE.rc, exports.def,
-                     Engine.h, Engine.cpp, Log.h (os tres ultimos sao copias exatas dos do FreeClimbLE)
- GuardCounters.ini   (vai para Data\SKSE\Plugins\, ao lado da DLL; substitui o do pacote LE)
-
-COMO COMPILAR
- Igual ao FreeClimbLE: Actions > "Build Guard Counters LE" > Run workflow; descarregar o artefacto "resultado"
- (GuardCountersLE.dll + build.log). Se falhar, enviar o build.log (os primeiros erros aparecem no fim do passo "Compilar").
- Plano B do SKSE: third_party\skse_1_07_03.7z no repositorio, como no FreeClimbLE.
-
-COMO INSTALAR
- Data\SKSE\Plugins\GuardCountersLE.dll  e  Data\SKSE\Plugins\GuardCounters.ini
- O resto (animacoes, GuardCounters_BDI.json, config.json do OAR) e o pacote LE que ja tens.
+CONDICOES DAR (em cada _conditions.txt)
+ IsActorValueEqualTo(77, 1) AND IsActorBase("Skyrim.esm"|0x00000007) AND <arma>
+ - arma: IsEquippedRightType(0..5) para punhos/espada/adaga/machado/maca/espadao;
+   machado de duas maos e martelo: IsEquippedRightHasKeyword (WeapTypeBattleaxe 0x06D932 / WeapTypeWarhammer 0x06D930);
+   dual wield: IsEquippedLeftType(1..4) em OR; com escudo: IsEquippedRightType(n) AND IsEquippedLeftType(11).
+ As prioridades sao as mesmas do pacote OAR (2000000000 ... 2000020030).
 
 NAO VERIFICADO (so o jogo diz)
- - Nao pude compilar aqui (sem o SKSE 1.7.3 nem o MSBuild): so verifiquei a sintaxe do codigo novo com cabecalhos
-   simulados. A compilacao real e a do GitHub Actions.
- - Que o Inpa marca o deflect com bNoStagger=TRUE no teu setup (li os scripts compilados; a leitura e uma deducao).
- - Que o BDI do LE cria GuardCounters_Trigger no grafo do jogador (se nao, o log diz "FAILED").
- - Que o evento de input chega a tempo: a janela abre no primeiro evento de input depois do deflect.
+ - Nao pude compilar aqui (sem SKSE 1.7.3 nem MSBuild): so verifiquei a sintaxe do codigo novo com cabecalhos simulados.
+ - Que Variable10 e o indice 77 no LE (lembro-me de 68 = Variable01 ... 77 = Variable10, mas nao confirmei). O auto-teste
+   so prova que o atributo e escrevivel, nao qual e. Se o indice estiver errado, o sinal ainda funciona (qualquer atributo
+   a 0 serve), mas confirme no log que o valor lido e 0 antes e 1 durante a janela.
+ - Escudo: nao sei se o Themis resolve IsEquippedLeftType(11) como escudo. Se nao, com escudo cai na pasta da arma da
+   mao direita (continua a tocar um counter, mas o de uma mao). O log do Themis (linhas [OAR-LE EQUIPPEDTYPE]
+   hand=left expected=11 resolved=...) mostra o valor real.
+ - Que o atributo fica estavel entre o "ligar" e o OAR/DAR escolher o clip (a DLL liga-o na abertura da janela, antes do ataque).
 
-SE ALGO FALHAR, ENVIE O GuardCountersLE.log (Documentos\My Games\Skyrim\SKSE\). Linhas uteis:
- "counter: first read - 'bNoStagger' readable ..."   -> a DLL consegue ler as variaveis do grafo
- "counter: 'bNoStagger' -> TRUE (state idle, blocking N)"  -> o Inpa marcou o deflect
- "counter: deflect detected (N ms after blocking) - counter ready"  -> janela aberta
- "counter: GuardCounters_Trigger = 1 (...) -> ok / FAILED"  -> o BDI/OAR conseguem ver a variavel
- "counter: attack pressed N ms after the window opened - counter consumed"  -> counter usado
- "counter: ... went TRUE but the player was not blocking" -> falso positivo filtrado
- Teste: desembainhe, bloqueie no momento certo de um golpe (deflect do Inpa), e ataque em ate 1,5 s.
+COMO TESTAR
+ 1. Compilar no Actions e copiar GuardCountersLE.dll + GuardCounters.ini para Data\SKSE\Plugins.
+ 2. Juntar a pasta meshes das animacoes DAR ao mod.
+ 3. No Themis_OAR.ini: uParserLogLimit=3000 (e, se quiser ver a avaliacao do counter, uConditionLogLimit/uActivateLogLimit altos).
+ 4. Jogo: carregar um save, desembainhar, fazer um deflect com o Inpa e atacar dentro de 1,5 s.
+ 5. Enviar GuardCountersLE.log e Themis_OAR.log. No GuardCountersLE.log procurar "signal self-test", "signal OK",
+    "signal actor value 77 -> 1 (window opened), reads 1.00" e "counter consumed".
+ No Themis_OAR.log procurar "GuardCounters" / "_CustomConditions\2000000010" nas linhas do parser: devem aparecer
+ reconhecidas (unknown=0), e [OAR-LE ACTIVATE] com repl='...\2000000010\mco_attack1.hkx' no momento do golpe.
 
 NOTAS
- As animacoes sao do black364 (Elden Counter) e os sons do dTry; o README original diz que nao podem ser
- redistribuidas sem autorizacao do autor, por isso o pacote convertido e para uso pessoal.
+ As animacoes sao do black364 (Elden Counter) e os sons do dTry; o README original diz que nao podem ser redistribuidas
+ sem autorizacao do autor, por isso o pacote convertido e para uso pessoal.
+ Continuam por implementar: invencibilidade, stagger forcado do inimigo, brilho, sons e menu proprio (MCM).

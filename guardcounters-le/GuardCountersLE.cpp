@@ -13,7 +13,7 @@
 #include <shlobj.h>
 
 #define PLUGIN_NAME				"GuardCountersLE"
-#define PLUGIN_VERSION_STRING	"0.1.0 (primeira versao: deflect do Inpa Sekiro -> janela de counter -> MCO)"
+#define PLUGIN_VERSION_STRING	"0.2.0 (deflect do Inpa Sekiro -> janela de counter -> sinal por atributo para o Themis DAR)"
 #define PLUGIN_LOG_FILE			"\\My Games\\Skyrim\\SKSE\\GuardCountersLE.log"
 
 static PluginHandle				g_pluginHandle	= kPluginHandle_Invalid;

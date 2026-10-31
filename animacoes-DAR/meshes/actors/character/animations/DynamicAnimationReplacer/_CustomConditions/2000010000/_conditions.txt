@@ -1,0 +1,6 @@
+IsActorValueEqualTo(77, 1) AND
+IsActorBase("Skyrim.esm"|0x00000007) AND
+IsEquippedLeftType(1) OR
+IsEquippedLeftType(2) OR
+IsEquippedLeftType(3) OR
+IsEquippedLeftType(4)

@@ -1,4 +1,4 @@
-// Counter.cpp - Guard Counters LE, versao 0.1.
+// Counter.cpp - Guard Counters LE, versao 0.2.
 //
 // O que faz (so MCO, so deflect do Inpa Sekiro):
 //   1. Deteta um deflect bem-sucedido do Inpa Sekiro. O Inpa (script zzzSekiro_player_parry3) poe a
@@ -6,12 +6,14 @@
 //      a FALSE passado 1,5 a 4,2 s. Esse flanco (false -> true) e o nosso gatilho. Para nao confundir
 //      com outros mods que usam bNoStagger, exige-se que o jogador estivesse a bloquear ("isBlocking")
 //      no ultimo segundo.
-//   2. Abre a janela de counter (WindowSeconds): poe a variavel de grafo GuardCounters_Trigger a 1.
-//      E ela que o Behavior Data Injector (GuardCounters_BDI.json) cria e o Open Animation Replacer
-//      usa nas condicoes das animacoes de counter.
+//   2. Abre a janela de counter (WindowSeconds) e SINALIZA-A de duas formas:
+//        - a variavel de grafo GuardCounters_Trigger = 1 (o Behavior Data Injector cria-a; fica por compatibilidade);
+//        - um VALOR DE ATRIBUTO do jogador (SignalActorValue, por omissao Variable10) sobe de 0 para 1.
+//      O Themis (o OAR/DAR do LE) nao tem avaliador de variaveis de grafo, mas avalia valores de atributo:
+//      as animacoes DAR de counter tem a condicao IsActorValueEqualTo(<atributo>, 1).
 //   3. Se o jogador atacar dentro da janela ("Right Attack/Block"), consome o counter: cobra a estamina
 //      e mantem a variavel a 1 ate o golpe comecar (e acabar), para o OAR escolher a animacao de counter.
-//   4. Fecha a janela (variavel a 0) ao expirar, ou quando o golpe termina.
+//   4. Fecha a janela (sinal a 0) ao expirar, ou quando o golpe termina.
 //
 // Tudo corre a partir do receptor de teclas do SKSE (o mesmo metodo do FreeClimbLE), por isso a leitura
 // do estado acontece sempre que chega um evento de input (rato, teclas, comando).
@@ -48,6 +50,8 @@ namespace
 		int		requireWeaponDrawn;		// [LE] RequireWeaponDrawn
 		int		verbose;				// [LE] Verbose - regista cada flanco/estado (ligado nesta versao de teste)
 		char	deflectVariable[64];	// [LE] DeflectVariable - variavel de grafo que o Inpa poe a TRUE no deflect
+		int		signalEnabled;			// [LE] SignalEnabled - escreve o sinal no valor de atributo
+		int		signalActorValue;		// [LE] SignalActorValue - indice do atributo (77 = Variable10)
 	};
 
 	Config	g_cfg;
@@ -110,6 +114,10 @@ namespace
 		g_cfg.requireBlocking = ReadInt("LE", "RequireBlocking", 1);
 		g_cfg.requireWeaponDrawn = ReadInt("LE", "RequireWeaponDrawn", 1);
 		g_cfg.verbose = ReadInt("LE", "Verbose", 1);
+		g_cfg.signalEnabled = ReadInt("LE", "SignalEnabled", 1);
+		g_cfg.signalActorValue = ReadInt("LE", "SignalActorValue", 77);
+		if(g_cfg.signalActorValue < 0) g_cfg.signalActorValue = 0;
+		if(g_cfg.signalActorValue > 200) g_cfg.signalActorValue = 200;
 
 		GetPrivateProfileStringA("LE", "DeflectVariable", "bNoStagger", g_cfg.deflectVariable, sizeof(g_cfg.deflectVariable), g_iniPath);
 		if(!g_cfg.deflectVariable[0]) _snprintf_s(g_cfg.deflectVariable, sizeof(g_cfg.deflectVariable), _TRUNCATE, "bNoStagger");
@@ -120,6 +128,7 @@ namespace
 				 (double)g_cfg.armedHoldSeconds, (double)g_cfg.blockGraceSeconds);
 		_MESSAGE("counter: deflect variable '%s', require blocking %d, require weapon drawn %d, verbose %d",
 				 g_cfg.deflectVariable, g_cfg.requireBlocking, g_cfg.requireWeaponDrawn, g_cfg.verbose);
+		_MESSAGE("counter: actor-value signal %s (actor value %d; 77 = Variable10)", g_cfg.signalEnabled ? "on" : "off", g_cfg.signalActorValue);
 	}
 
 	// ------------------------------------------------------------------ estado
@@ -137,6 +146,9 @@ namespace
 	bool	g_firstPollLogged = false;
 	bool	g_warnedDeflect = false;
 	bool	g_warnedBlocking = false;
+	int		g_signalMod = -1;				// modificador do atributo que funcionou no auto-teste (-1 = ainda nao testado / falhou)
+	bool	g_signalOn = false;				// o sinal esta a 1 por nossa causa
+	bool	g_signalTested = false;
 
 	const char * StateName(int s)
 	{
@@ -155,12 +167,95 @@ namespace
 		return Engine::GetGraphVariableBool((TESObjectREFR *)player, BSFixedString(name), out);
 	}
 
-	// GuardCounters_Trigger: a variavel que o BDI cria no grafo do jogador e o OAR le nas condicoes.
+	// ---- sinal por valor de atributo (o que o Themis avalia)
+	// ActorValueOwner no actor + 0x60, slot 6 = modificador (como o DamageActorValue do Engine.h):
+	// modifier 0 = permanente, 1 = temporario, 2 = dano.
+	void ApplyModifier(Actor * actor, UInt32 modifier, UInt32 av, float delta)
+	{
+		if(!Engine::Readable(actor, 0x64)) return;
+		void * owner = (UInt8 *)actor + 0x60;
+		void ** vtable = *(void ***)owner;
+		if(!Engine::Readable(vtable, 7 * sizeof(void *))) return;
+
+		void (__thiscall * fn)(void *, UInt32, UInt32, float) = (void (__thiscall *)(void *, UInt32, UInt32, float))vtable[6];
+		fn(owner, modifier, av, delta);
+	}
+
+	// Testa que o atributo e escrevivel e descobre que modificador funciona (temporario, dano ou permanente).
+	// Se encontrar o atributo a 1 (um sinal esquecido num save), limpa-o.
+	void SelfTestSignal(Actor * player)
+	{
+		g_signalMod = -1;
+		g_signalOn = false;
+		if(!g_cfg.signalEnabled) return;
+
+		const UInt32 av = (UInt32)g_cfg.signalActorValue;
+		static const UInt32 order[3] = { 1, 2, 0 };
+		float base = Engine::GetActorValue(player, av);
+		_MESSAGE("counter: signal self-test - actor value %u reads %.2f", (unsigned)av, (double)base);
+
+		if(fabsf(base - 1.0f) < 0.01f)
+		{
+			// provavelmente um sinal que ficou a 1 num save: tentar leva-lo a 0
+			for(int i = 0; i < 3 && fabsf(base) > 0.01f; ++i)
+			{
+				ApplyModifier(player, order[i], av, -1.0f);
+				base = Engine::GetActorValue(player, av);
+				_MESSAGE("counter: signal self-test - clearing a stale signal with modifier %u -> reads %.2f", (unsigned)order[i], (double)base);
+			}
+		}
+
+		if(fabsf(base) > 0.01f)
+		{
+			_MESSAGE("counter: signal DISABLED - actor value %u is %.2f, not 0 (another mod may use it). Pick another SignalActorValue in the ini and regenerate the DAR conditions.", (unsigned)av, (double)base);
+			return;
+		}
+
+		for(int i = 0; i < 3; ++i)
+		{
+			const UInt32 m = order[i];
+			ApplyModifier(player, m, av, 1.0f);
+			const float up = Engine::GetActorValue(player, av);
+			ApplyModifier(player, m, av, -1.0f);
+			float down = Engine::GetActorValue(player, av);
+
+			int guard = 0;
+			while(down > base + 0.01f && guard++ < 3)		// se o +1 ficou preso, tira-o
+			{
+				ApplyModifier(player, m, av, -1.0f);
+				down = Engine::GetActorValue(player, av);
+			}
+
+			_MESSAGE("counter: signal self-test - modifier %u: %.2f -> %.2f -> %.2f", (unsigned)m, (double)base, (double)up, (double)down);
+
+			if(fabsf(up - (base + 1.0f)) < 0.01f && fabsf(down - base) < 0.01f)
+			{
+				g_signalMod = (int)m;
+				_MESSAGE("counter: signal OK - using modifier %u on actor value %u", (unsigned)m, (unsigned)av);
+				return;
+			}
+		}
+
+		_MESSAGE("counter: signal DISABLED - actor value %u could not be written with any modifier; the Themis DAR counters will not trigger", (unsigned)av);
+	}
+
+	void SetSignal(Actor * player, bool on, const char * why)
+	{
+		if(!g_cfg.signalEnabled || g_signalMod < 0 || on == g_signalOn) return;
+
+		const UInt32 av = (UInt32)g_cfg.signalActorValue;
+		ApplyModifier(player, (UInt32)g_signalMod, av, on ? 1.0f : -1.0f);
+		g_signalOn = on;
+		_MESSAGE("counter: signal actor value %u -> %d (%s), reads %.2f", (unsigned)av, on ? 1 : 0, why, (double)Engine::GetActorValue(player, av));
+	}
+
+	// Abre/fecha a janela para o jogo: variavel de grafo (BDI) + valor de atributo (Themis DAR).
 	void SetTrigger(Actor * player, int value, const char * why)
 	{
 		const bool ok = Engine::SetGraphVariableInt((TESObjectREFR *)player, BSFixedString("GuardCounters_Trigger"), value);
-		_MESSAGE("counter: GuardCounters_Trigger = %d (%s) -> %s", value, why,
-				 ok ? "ok" : "FAILED (is GuardCounters_BDI.json in SKSE\\Plugins\\BehaviorDataInjector, and the BDI for LE installed?)");
+		_MESSAGE("counter: GuardCounters_Trigger (graph variable) = %d (%s) -> %s", value, why,
+				 ok ? "ok" : "not found (harmless: the Themis DAR counters use the actor-value signal)");
+		SetSignal(player, value != 0, why);
 	}
 
 	void Open(Actor * player, DWORD now, DWORD sinceBlocking)
@@ -303,6 +398,12 @@ namespace
 			return;
 		}
 
+		if(!g_signalTested)
+		{
+			g_signalTested = true;
+			SelfTestSignal(player);
+		}
+
 		Poll(player);
 		if(attackPressed) OnAttackPressed(player);
 	}
@@ -365,5 +466,7 @@ void CounterReset()
 	g_lastBlocking = 0;
 	g_attackSeen = false;
 	g_cooldownMs = 0;
+	g_signalOn = false;
+	g_signalTested = false;			// repetir o auto-teste no proximo evento de input (limpa um sinal esquecido no save)
 	_MESSAGE("counter: state reset");
 }
