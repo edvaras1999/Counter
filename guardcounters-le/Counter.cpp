@@ -1,26 +1,21 @@
-// Counter.cpp - Guard Counters LE, versao 0.2.
+// Counter.cpp - Guard Counters LE, versao 0.3 (primeira fase de efeitos).
 //
 // O que faz (so MCO, so deflect do Inpa Sekiro):
-//   1. Deteta um deflect bem-sucedido do Inpa Sekiro. O Inpa (script zzzSekiro_player_parry3) poe a
-//      variavel de animacao "bNoStagger" do jogador a TRUE quando o deflect resulta, e volta a poe-la
-//      a FALSE passado 1,5 a 4,2 s. Esse flanco (false -> true) e o nosso gatilho. Para nao confundir
-//      com outros mods que usam bNoStagger, exige-se que o jogador estivesse a bloquear ("isBlocking")
-//      no ultimo segundo.
-//   2. Abre a janela de counter (WindowSeconds) e SINALIZA-A de duas formas:
-//        - a variavel de grafo GuardCounters_Trigger = 1 (o Behavior Data Injector cria-a; fica por compatibilidade);
-//        - um VALOR DE ATRIBUTO do jogador (SignalActorValue, por omissao Variable10) sobe de 0 para 1.
-//      O Themis (o OAR/DAR do LE) nao tem avaliador de variaveis de grafo, mas avalia valores de atributo:
-//      as animacoes DAR de counter tem a condicao IsActorValueEqualTo(<atributo>, 1).
-//   3. Se o jogador atacar dentro da janela ("Right Attack/Block"), consome o counter: cobra a estamina
-//      e mantem a variavel a 1 ate o golpe comecar (e acabar), para o OAR escolher a animacao de counter.
-//   4. Fecha a janela (sinal a 0) ao expirar, ou quando o golpe termina.
+//   1. Deteta um deflect bem-sucedido do Inpa Sekiro: a variavel de animacao "bNoStagger" do jogador sobe a TRUE
+//      (script zzzSekiro_player_parry3), com o jogador a bloquear ("isBlocking") no ultimo instante.
+//   2. Abre a janela de counter (WindowSeconds) e SINALIZA-A:
+//        - variavel de grafo GuardCounters_Trigger = 1 (BDI; fica por compatibilidade);
+//        - valor de atributo do jogador (SignalActorValue, por omissao Variable10) a 1: o Themis (OAR/DAR do LE)
+//          nao avalia variaveis de grafo mas avalia atributos, e as animacoes DAR de counter pedem
+//          IsActorValueEqualTo(<atributo>, 1).
+//      Envia o evento "ready" ao script do menu (som de pronto e marca perilous no jogador).
+//   3. Se o jogador atacar dentro da janela ("Right Attack/Block"): consome o counter, cobra a estamina e envia
+//      "swing" (som do golpe, imunidade total com SetGhost). Liga a super armor (sem stagger no jogador).
+//   4. Enquanto o golpe dura, cada inimigo que o jogador atinge leva o stagger forcado (animacao) e, se
+//      CounterDamagePercent != 100, o script aplica o dano extra ("hit").
+//   5. Fecha tudo ao acabar o golpe, ao expirar a janela ou por timeout ("end" / "expire").
 //
-// Tudo corre a partir do receptor de teclas do SKSE (o mesmo metodo do FreeClimbLE), por isso a leitura
-// do estado acontece sempre que chega um evento de input (rato, teclas, comando).
-//
-// Fica para versoes seguintes (precisam de hooks de dano/golpe que nao se podem escrever sem o jogo):
-// invencibilidade, stagger forcado do inimigo, brilho, sons e menu proprio. Super armor: ja a da o
-// proprio Inpa, que mantem bNoStagger a TRUE durante 1,5 a 4,2 s apos o deflect.
+// Tudo corre a partir do receptor de teclas do SKSE (como no FreeClimbLE) e do receptor de hits (TESHitEvent).
 
 #include <math.h>
 #include <stdio.h>
@@ -30,107 +25,15 @@
 
 #include "Engine.h"
 #include "Counter.h"
+#include "Options.h"
 #include "Log.h"
 
 #include "skse/GameInput.h"
+#include "skse/GameEvents.h"
 #include "skse/GameReferences.h"
 
 namespace
 {
-	// ------------------------------------------------------------------ afinacoes (GuardCounters.ini)
-	struct Config
-	{
-		float	windowSeconds;			// [Counter] WindowSeconds - quanto tempo o counter fica disponivel apos o deflect
-		float	cooldownSeconds;		// [Counter] CooldownSeconds - pausa apos usar um counter
-		int		staminaOn;				// [Combat] StaminaCostEnabled
-		float	staminaCost;			// [Combat] StaminaCost - pontos de estamina
-		float	armedHoldSeconds;		// [LE] ArmedHoldSeconds - maximo que a variavel fica a 1 depois de atacar
-		float	blockGraceSeconds;		// [LE] BlockGraceSeconds - o jogador tinha de estar a bloquear ha menos de isto
-		int		requireBlocking;		// [LE] RequireBlocking
-		int		requireWeaponDrawn;		// [LE] RequireWeaponDrawn
-		int		verbose;				// [LE] Verbose - regista cada flanco/estado (ligado nesta versao de teste)
-		char	deflectVariable[64];	// [LE] DeflectVariable - variavel de grafo que o Inpa poe a TRUE no deflect
-		int		signalEnabled;			// [LE] SignalEnabled - escreve o sinal no valor de atributo
-		int		signalActorValue;		// [LE] SignalActorValue - indice do atributo (77 = Variable10)
-	};
-
-	Config	g_cfg;
-	char	g_iniPath[MAX_PATH];
-
-	bool FileExists(const char * path)
-	{
-		const DWORD attrs = GetFileAttributesA(path);
-		return attrs != INVALID_FILE_ATTRIBUTES && !(attrs & FILE_ATTRIBUTE_DIRECTORY);
-	}
-
-	// O .ini fica ao lado da DLL (funciona com o MO2 e o Vortex), como no FreeClimbLE.
-	void ResolveIniPath()
-	{
-		g_iniPath[0] = 0;
-
-		HMODULE self = NULL;
-		if(!GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCSTR)&ResolveIniPath, &self))
-			return;
-
-		char dll[MAX_PATH] = { 0 };
-		const DWORD n = GetModuleFileNameA(self, dll, MAX_PATH);
-		if(n == 0 || n >= MAX_PATH) return;
-
-		char * slash = strrchr(dll, '\\');
-		if(!slash) return;
-		slash[1] = 0;
-		_snprintf_s(g_iniPath, sizeof(g_iniPath), _TRUNCATE, "%sGuardCounters.ini", dll);
-	}
-
-	float ReadFloat(const char * section, const char * key, float fallback, float lo, float hi)
-	{
-		char text[64];
-		_snprintf_s(text, sizeof(text), _TRUNCATE, "%g", (double)fallback);
-
-		char buffer[64] = { 0 };
-		GetPrivateProfileStringA(section, key, text, buffer, sizeof(buffer), g_iniPath);
-
-		float value = (float)atof(buffer);
-		if(!(value >= lo)) value = lo;		// tambem apanha NaN
-		if(value > hi) value = hi;
-		return value;
-	}
-
-	int ReadInt(const char * section, const char * key, int fallback)
-	{
-		return (int)GetPrivateProfileIntA(section, key, fallback, g_iniPath);
-	}
-
-	void LoadConfig()
-	{
-		ResolveIniPath();
-
-		g_cfg.windowSeconds = ReadFloat("Counter", "WindowSeconds", 1.5f, 0.1f, 5.0f);
-		g_cfg.cooldownSeconds = ReadFloat("Counter", "CooldownSeconds", 0.0f, 0.0f, 30.0f);
-		g_cfg.staminaOn = ReadInt("Combat", "StaminaCostEnabled", 1);
-		g_cfg.staminaCost = ReadFloat("Combat", "StaminaCost", 20.0f, 0.0f, 500.0f);
-		g_cfg.armedHoldSeconds = ReadFloat("LE", "ArmedHoldSeconds", 1.5f, 0.2f, 5.0f);
-		g_cfg.blockGraceSeconds = ReadFloat("LE", "BlockGraceSeconds", 1.0f, 0.1f, 5.0f);
-		g_cfg.requireBlocking = ReadInt("LE", "RequireBlocking", 1);
-		g_cfg.requireWeaponDrawn = ReadInt("LE", "RequireWeaponDrawn", 1);
-		g_cfg.verbose = ReadInt("LE", "Verbose", 1);
-		g_cfg.signalEnabled = ReadInt("LE", "SignalEnabled", 1);
-		g_cfg.signalActorValue = ReadInt("LE", "SignalActorValue", 77);
-		if(g_cfg.signalActorValue < 0) g_cfg.signalActorValue = 0;
-		if(g_cfg.signalActorValue > 200) g_cfg.signalActorValue = 200;
-
-		GetPrivateProfileStringA("LE", "DeflectVariable", "bNoStagger", g_cfg.deflectVariable, sizeof(g_cfg.deflectVariable), g_iniPath);
-		if(!g_cfg.deflectVariable[0]) _snprintf_s(g_cfg.deflectVariable, sizeof(g_cfg.deflectVariable), _TRUNCATE, "bNoStagger");
-
-		_MESSAGE("counter: ini %s (%s)", g_iniPath[0] ? g_iniPath : "(not found)", g_iniPath[0] && FileExists(g_iniPath) ? "found" : "missing - using defaults");
-		_MESSAGE("counter: window %.2f s, cooldown %.2f s, stamina %s %.1f, armed hold %.2f s, block grace %.2f s",
-				 (double)g_cfg.windowSeconds, (double)g_cfg.cooldownSeconds, g_cfg.staminaOn ? "on" : "off", (double)g_cfg.staminaCost,
-				 (double)g_cfg.armedHoldSeconds, (double)g_cfg.blockGraceSeconds);
-		_MESSAGE("counter: deflect variable '%s', require blocking %d, require weapon drawn %d, verbose %d",
-				 g_cfg.deflectVariable, g_cfg.requireBlocking, g_cfg.requireWeaponDrawn, g_cfg.verbose);
-		_MESSAGE("counter: actor-value signal %s (actor value %d; 77 = Variable10)", g_cfg.signalEnabled ? "on" : "off", g_cfg.signalActorValue);
-	}
-
 	// ------------------------------------------------------------------ estado
 	enum State { kIdle = 0, kReady = 1, kConsumed = 2 };
 
@@ -149,6 +52,10 @@ namespace
 	int		g_signalMod = -1;				// modificador do atributo que funcionou no auto-teste (-1 = ainda nao testado / falhou)
 	bool	g_signalOn = false;				// o sinal esta a 1 por nossa causa
 	bool	g_signalTested = false;
+	bool	g_armorSet = false;				// mexemos em bNoStagger (super armor)
+	bool	g_armorPrev = false;			// valor que bNoStagger tinha antes
+	UInt32	g_hitIds[8];					// inimigos ja atingidos por este counter
+	int		g_hitCount = 0;
 
 	const char * StateName(int s)
 	{
@@ -196,7 +103,6 @@ namespace
 
 		if(fabsf(base - 1.0f) < 0.01f)
 		{
-			// provavelmente um sinal que ficou a 1 num save: tentar leva-lo a 0
 			for(int i = 0; i < 3 && fabsf(base) > 0.01f; ++i)
 			{
 				ApplyModifier(player, order[i], av, -1.0f);
@@ -220,7 +126,7 @@ namespace
 			float down = Engine::GetActorValue(player, av);
 
 			int guard = 0;
-			while(down > base + 0.01f && guard++ < 3)		// se o +1 ficou preso, tira-o
+			while(down > base + 0.01f && guard++ < 3)
 			{
 				ApplyModifier(player, m, av, -1.0f);
 				down = Engine::GetActorValue(player, av);
@@ -253,11 +159,44 @@ namespace
 	void SetTrigger(Actor * player, int value, const char * why)
 	{
 		const bool ok = Engine::SetGraphVariableInt((TESObjectREFR *)player, BSFixedString("GuardCounters_Trigger"), value);
-		_MESSAGE("counter: GuardCounters_Trigger (graph variable) = %d (%s) -> %s", value, why,
-				 ok ? "ok" : "not found (harmless: the Themis DAR counters use the actor-value signal)");
+		if(g_cfg.verbose)
+			_MESSAGE("counter: GuardCounters_Trigger (graph variable) = %d (%s) -> %s", value, why,
+					 ok ? "ok" : "not found (harmless: the Themis DAR counters use the actor-value signal)");
 		SetSignal(player, value != 0, why);
 	}
 
+	// ---- super armor: o jogador nao leva stagger durante o golpe (bNoStagger a TRUE, como o Inpa no deflect)
+	bool DeflectVarIsNoStagger() { return _stricmp(g_cfg.deflectVariable, "bNoStagger") == 0; }
+
+	void ArmorOn(Actor * player)
+	{
+		if(!g_cfg.superArmorOn || g_armorSet) return;
+
+		bool current = false;
+		ReadGraphBool(player, "bNoStagger", current);
+		g_armorPrev = current;
+		g_armorSet = true;
+		if(!current)
+		{
+			Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), true);
+			if(DeflectVarIsNoStagger()) g_prevDeflect = true;		// nao e um deflect novo
+			if(g_cfg.verbose) _MESSAGE("counter: super armor on (bNoStagger = TRUE)");
+		}
+	}
+
+	void ArmorOff(Actor * player)
+	{
+		if(!g_armorSet) return;
+		g_armorSet = false;
+		if(!g_armorPrev)
+		{
+			Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), false);
+			if(DeflectVarIsNoStagger()) g_prevDeflect = false;
+			if(g_cfg.verbose) _MESSAGE("counter: super armor off (bNoStagger = false)");
+		}
+	}
+
+	// ---- janela
 	void Open(Actor * player, DWORD now, DWORD sinceBlocking)
 	{
 		SetTrigger(player, 1, "window opened");
@@ -265,13 +204,17 @@ namespace
 		g_stateSince = now;
 		g_attackSeen = false;
 		_MESSAGE("counter: deflect detected (%u ms after blocking) - counter ready for %.2f s", (unsigned)sinceBlocking, (double)g_cfg.windowSeconds);
+		Options::SendEvent("ready", 0.0f, NULL);
 	}
 
-	void Close(Actor * player, const char * why)
+	// Fecha: a janela expirou sem ataque ('swung' = false) ou o golpe acabou ('swung' = true).
+	void Close(Actor * player, const char * why, bool swung)
 	{
 		SetTrigger(player, 0, why);
+		if(swung) ArmorOff(player);
 		g_state = kIdle;
 		g_attackSeen = false;
+		Options::SendEvent(swung ? "end" : "expire", 0.0f, NULL);
 	}
 
 	// Chamado a cada evento de input: le o estado do jogo e avanca a maquina de estados.
@@ -344,7 +287,7 @@ namespace
 		if(g_state == kReady)
 		{
 			if(now - g_stateSince > (DWORD)(g_cfg.windowSeconds * 1000.0f))
-				Close(player, "window expired without an attack");
+				Close(player, "window expired without an attack", false);
 		}
 		else if(g_state == kConsumed)
 		{
@@ -356,9 +299,9 @@ namespace
 			}
 
 			if(g_attackSeen && attack == 0)
-				Close(player, "the counter attack finished");
+				Close(player, "the counter attack finished", true);
 			else if(now - g_stateSince > (DWORD)(g_cfg.armedHoldSeconds * 1000.0f))
-				Close(player, g_attackSeen ? "hold timeout (attack still running)" : "hold timeout (the attack never started)");
+				Close(player, g_attackSeen ? "hold timeout (attack still running)" : "hold timeout (the attack never started)", true);
 		}
 	}
 
@@ -373,6 +316,7 @@ namespace
 		g_state = kConsumed;
 		g_stateSince = now;
 		g_attackSeen = false;
+		g_hitCount = 0;
 
 		g_cooldownStart = now;
 		g_cooldownMs = (DWORD)(g_cfg.cooldownSeconds * 1000.0f);
@@ -384,6 +328,9 @@ namespace
 			if(cost > 0.0f) Engine::DamageActorValue(player, Engine::kActorValue_Stamina, cost);
 			_MESSAGE("counter: stamina %.1f -> %.1f (cost %.1f)", (double)current, (double)(current - cost), (double)cost);
 		}
+
+		ArmorOn(player);
+		Options::SendEvent("swing", 0.0f, NULL);		// o script toca o som do golpe e liga a imunidade
 	}
 
 	void OnInput(bool attackPressed)
@@ -393,7 +340,9 @@ namespace
 		if(!player || !Engine::ActorIsBuilt(player) || Engine::LifeState(player) != Engine::kLifeState_Alive)
 		{
 			// o jogador ainda esta a ser construido, ou morreu: nada a perguntar ao jogo
+			if(g_state != kIdle) Options::SendEvent("end", 0.0f, NULL);
 			g_state = kIdle;
+			g_armorSet = false;
 			g_primed = false;
 			return;
 		}
@@ -407,6 +356,49 @@ namespace
 		Poll(player);
 		if(attackPressed) OnAttackPressed(player);
 	}
+
+	// ------------------------------------------------------------------ hits do jogador durante o counter
+	void ApplyStagger(Actor * victim)
+	{
+		TESObjectREFR * ref = (TESObjectREFR *)victim;
+		const bool a = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerDirection"), 0.0f);
+		const bool b = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerMagnitude"), g_cfg.staggerMagnitude);
+		const bool c = Engine::NotifyAnimationGraph(ref, BSFixedString("staggerStart"));
+		_MESSAGE("counter: forced stagger on %08X (magnitude %.2f): direction %s, magnitude %s, event %s",
+				 (unsigned)victim->formID, (double)g_cfg.staggerMagnitude, a ? "ok" : "FAILED", b ? "ok" : "FAILED", c ? "sent" : "FAILED");
+	}
+
+	void OnCounterHit(TESHitEvent * evn)
+	{
+		Actor * player = ThePlayer();
+		if(!player || !evn->caster || evn->caster != (TESObjectREFR *)player) return;
+		if(!evn->target || evn->target == (TESObjectREFR *)player) return;
+		if(evn->target->formType != kFormType_Character) return;
+		if(evn->flags & TESHitEvent::kFlag_Bash) return;
+
+		Actor * victim = (Actor *)evn->target;
+		if(Engine::LifeState(victim) != Engine::kLifeState_Alive) return;
+
+		for(int i = 0; i < g_hitCount; ++i)
+			if(g_hitIds[i] == victim->formID) return;			// um so efeito por inimigo e por counter
+		if(g_hitCount < 8) g_hitIds[g_hitCount++] = victim->formID;
+
+		_MESSAGE("counter: the counter hit %08X (flags %u)", (unsigned)victim->formID, (unsigned)evn->flags);
+
+		if(g_cfg.staggerOn) ApplyStagger(victim);
+		if(g_cfg.damagePercent != 100) Options::SendEvent("hit", (float)g_cfg.damagePercent, (TESForm *)victim);
+	}
+
+	class HitSink : public BSTEventSink<TESHitEvent>
+	{
+	public:
+		virtual EventResult ReceiveEvent(TESHitEvent * evn, EventDispatcher<TESHitEvent> * dispatcher)
+		{
+			if(evn && g_state == kConsumed) OnCounterHit(evn);
+			return kEvent_Continue;
+		}
+	};
+	HitSink g_hitSink;
 
 	// ------------------------------------------------------------------ teclas
 	class InputSink : public BSTEventSink<InputEvent>
@@ -441,7 +433,7 @@ namespace
 
 void CounterInit()
 {
-	LoadConfig();
+	Options::Init();
 }
 
 void CounterRegisterInput()
@@ -450,6 +442,13 @@ void CounterRegisterInput()
 	if(!dispatcher) { _MESSAGE("counter: input dispatcher not available - the counter will not work"); return; }
 	dispatcher->AddEventSink(&g_sink);
 	_MESSAGE("counter: input receiver registered - block with Inpa Sekiro, then attack");
+
+	if(g_hitEventDispatcher)
+	{
+		g_hitEventDispatcher->AddEventSink(&g_hitSink);
+		_MESSAGE("counter: hit receiver registered (forced stagger and counter damage)");
+	}
+	else _MESSAGE("counter: hit dispatcher not available - no forced stagger / counter damage");
 }
 
 void CounterReset()
@@ -457,8 +456,11 @@ void CounterReset()
 	Engine::ForgetMemoryLayout();
 
 	Actor * player = ThePlayer();
-	if(g_state != kIdle && player && Engine::ActorIsBuilt(player))
-		SetTrigger(player, 0, "reset (load / new game)");
+	if(g_state != kIdle)
+	{
+		if(player && Engine::ActorIsBuilt(player)) { SetTrigger(player, 0, "reset (load / new game)"); ArmorOff(player); }
+		Options::SendEvent("end", 0.0f, NULL);
+	}
 
 	g_state = kIdle;
 	g_primed = false;
@@ -468,5 +470,15 @@ void CounterReset()
 	g_cooldownMs = 0;
 	g_signalOn = false;
 	g_signalTested = false;			// repetir o auto-teste no proximo evento de input (limpa um sinal esquecido no save)
+	g_armorSet = false;
+	g_hitCount = 0;
 	_MESSAGE("counter: state reset");
+}
+
+// 0 = o sinal por valor de atributo funciona (1/0), 1 = estado do counter (0 parado, 1 pronto, 2 em curso)
+int CounterStatus(int what)
+{
+	if(what == 0) return (g_cfg.signalEnabled && g_signalMod >= 0) ? 1 : 0;
+	if(what == 1) return (int)g_state;
+	return 0;
 }

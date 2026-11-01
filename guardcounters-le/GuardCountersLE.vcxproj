@@ -113,6 +113,7 @@
   <ItemGroup>
     <ClCompile Include="GuardCountersLE.cpp" />
     <ClCompile Include="Counter.cpp" />
+    <ClCompile Include="Options.cpp" />
     <ClCompile Include="..\..\skse\skse\SafeWrite.cpp" />
     <ClCompile Include="..\..\skse\skse\GameAPI.cpp" />
     <ClCompile Include="..\..\skse\skse\GameMenus.cpp" />
@@ -129,6 +130,7 @@
     <ClCompile Include="..\..\skse\skse\HashUtil.cpp" />
     <ClCompile Include="..\..\skse\skse\Utilities.cpp" />
     <ClCompile Include="..\..\skse\skse\GameRTTI.cpp" />
+    <ClCompile Include="..\..\skse\skse\GameEvents.cpp" />
     <ClCompile Include="Engine.cpp" />
     <None Include="exports.def" />
   </ItemGroup>
@@ -138,6 +140,7 @@
     <ClInclude Include="Log.h" />
     <ClInclude Include="Engine.h" />
     <ClInclude Include="Counter.h" />
+    <ClInclude Include="Options.h" />
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="GuardCountersLE.rc" />

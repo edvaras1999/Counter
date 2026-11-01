@@ -9,11 +9,12 @@
 #include "skse/skse_version.h"
 #include "Log.h"
 #include "Counter.h"
+#include "Options.h"
 
 #include <shlobj.h>
 
 #define PLUGIN_NAME				"GuardCountersLE"
-#define PLUGIN_VERSION_STRING	"0.2.0 (deflect do Inpa Sekiro -> janela de counter -> sinal por atributo para o Themis DAR)"
+#define PLUGIN_VERSION_STRING	"0.3.0 (fase 1: sons, marca perilous, menu, stagger forcado, dano de counter, imunidade)"
 #define PLUGIN_LOG_FILE			"\\My Games\\Skyrim\\SKSE\\GuardCountersLE.log"
 
 static PluginHandle				g_pluginHandle	= kPluginHandle_Invalid;
@@ -94,6 +95,12 @@ bool SKSEPlugin_Load(const SKSEInterface * skse)
 		_MESSAGE("ABORTING: the messaging interface is not available");
 		return false;
 	}
+	Options::SetMessaging(g_messaging);
+
+	// funcoes nativas do menu (GuardCountersNative)
+	SKSEPapyrusInterface * papyrus = (SKSEPapyrusInterface *)skse->QueryInterface(kInterface_Papyrus);
+	if(!papyrus || !papyrus->Register(Options::RegisterPapyrus))
+		_MESSAGE("WARNING: could not register the Papyrus functions - the in-game menu will not work");
 
 	_MESSAGE("running");
 	return true;

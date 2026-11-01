@@ -1,56 +1,64 @@
-GUARD COUNTERS LE - VERSAO 0.2
-Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE, so MCO, com o Inpa Sekiro,
-usando o Themis (OAR/DAR do LE).
+GUARD COUNTERS LE - VERSAO 0.3 (primeira fase de efeitos)
+Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE: so MCO, com o Inpa Sekiro,
+o Themis (OAR/DAR/BDI do LE) e o SkyUI (menu).
 
-O QUE MUDOU NA 0.2
- O teste da 0.1 mostrou que a DLL funciona (deflect detetado, janela aberta, estamina cobrada, golpe iniciado) mas o
- Themis nao trocou a animacao: as condicoes OAR do pacote dependem de uma variavel de grafo (GuardCounters_Trigger),
- e o Themis nao tem avaliador para isso (suspeita, ainda por confirmar no log do parser).
- Agora a DLL tambem poe um VALOR DE ATRIBUTO do jogador a 1 durante a janela (SignalActorValue, por omissao 77 =
- Variable10), e as animacoes passam a DAR com a condicao IsActorValueEqualTo(77, 1), que o Themis avalia
- (o teu log mostra-o a ler atributos do jogador sem erro).
- - Na arrancada (primeiro evento de input) a DLL faz um auto-teste: le o atributo, sobe +1, le, desce -1, e descobre
-   que modificador funciona (temporario, dano ou permanente). Se o atributo nao estiver a 0 (outro mod o usa),
-   desliga o sinal e avisa no log; nesse caso escolha outro SignalActorValue e gere de novo as pastas DAR.
- - Se um save foi feito com o sinal a 1, o auto-teste limpa-o ao carregar.
+O QUE ESTA NA 0.3 (alem da 0.2: deflect do Inpa -> janela -> animacao de counter -> estamina)
+ - SONS: counter pronto e golpe de counter, pelo audio do jogo (descritores SNDR + marcadores SOUN no ESP, tocados por Papyrus,
+   como o Inpa), com volume 0-200% (acima de 100 sobrepoe duas copias).
+ - MARCA (o "brilho"): a marca perilous do Inpa (o kanji) no jogador enquanto o counter esta pronto; desaparece ao atacar.
+   Usa a luz e o modelo do Inpa num efeito magico nosso; NAO corre nenhum script do Inpa.
+ - MENU (MCM "Guard Counters", EN/PT): janela, pausa, estamina, deteccao do deflect, marca, sons, imunidade, super armadura,
+   stagger forcado e dano do counter; perfil guardavel; repor valores de fabrica.
+ - STAGGER FORCADO: cada inimigo atingido pelo golpe de counter leva o evento de stagger (staggerStart, com a forca do menu).
+ - DANO DE COUNTER: acima de 100% soma dano extra (parte do dano base da arma); abaixo devolve parte (aproximado).
+ - IMUNIDADE TOTAL ao dano durante o golpe (SetGhost, o metodo que o Inpa usa no parry) e SUPER ARMADURA (sem stagger em ti).
+ Nao repomos vida: a imunidade e total, como pediste.
 
-O QUE ENTREGO (so o que mudou ou e novo)
- guardcounters-le\Counter.cpp, GuardCountersLE.cpp   (alterados: compilar no Actions como antes)
- GuardCounters.ini                                   (2 chaves novas em [LE]; vai para Data\SKSE\Plugins\)
- tools\make_dar.py                                   (novo: gera as pastas DAR a partir das configs OAR)
- animacoes-DAR\meshes\...\DynamicAnimationReplacer\_CustomConditions\<prioridade>\  (13 pastas, novas)
-   Copie a pasta "meshes" para dentro do mod "Guard Counters For BFCO And MCO V" (ao lado da pasta meshes que ja la esta).
-   Recomendo apagar do mod a pasta OpenAnimationReplacer\GuardCountersMCO: as condicoes OAR ficam ignoradas pelo Themis e
-   so poluem o log. As animacoes e o BDI.json (GuardCounters_BDI.json) mantem-se.
+FICHEIROS DESTA ENTREGA (so o que mudou ou e novo)
+ guardcounters-le\Counter.cpp, Counter.h, GuardCountersLE.cpp, GuardCountersLE.vcxproj   (alterados)
+ guardcounters-le\Options.cpp, Options.h                                                 (novos: opcoes, funcoes do menu, eventos)
+ papyrus\src\GuardCountersMCM.psc, GuardCountersFX.psc, GuardCountersNative.psc          (novos)
+ papyrus\stubs\*.psc, papyrus\TESV_Papyrus_Flags.flg                                     (novos: so servem para compilar)
+ papyrus\GuardCountersLE.esp                                                             (novo, ja gerado)
+ tools\make_gc_esp.py                                                                    (novo: gera o ESP)
+ .github\workflows\compile-papyrus.yml                                                   (novo: compila os 3 scripts)
+ GuardCounters.ini                                                                       (alterado: chaves novas; defaults = os que testaste)
 
-CONDICOES DAR (em cada _conditions.txt)
- IsActorValueEqualTo(77, 1) AND IsActorBase("Skyrim.esm"|0x00000007) AND <arma>
- - arma: IsEquippedRightType(0..5) para punhos/espada/adaga/machado/maca/espadao;
-   machado de duas maos e martelo: IsEquippedRightHasKeyword (WeapTypeBattleaxe 0x06D932 / WeapTypeWarhammer 0x06D930);
-   dual wield: IsEquippedLeftType(1..4) em OR; com escudo: IsEquippedRightType(n) AND IsEquippedLeftType(11).
- As prioridades sao as mesmas do pacote OAR (2000000000 ... 2000020030).
+COMO COMPILAR
+ 1. DLL: Actions > "Build Guard Counters LE" > Run workflow (como antes). O vcxproj agora compila tambem o Options.cpp e o
+    GameEvents.cpp do SKSE. Se falhar, envie o build.log.
+ 2. Scripts: Actions > "Compilar scripts Papyrus" > Run workflow. Descarregue o artefacto "papyrus": traz
+    GuardCountersMCM.pex, GuardCountersFX.pex e GuardCountersNative.pex. Se falhar, envie o papyrus-build.log.
 
-NAO VERIFICADO (so o jogo diz)
- - Nao pude compilar aqui (sem SKSE 1.7.3 nem MSBuild): so verifiquei a sintaxe do codigo novo com cabecalhos simulados.
- - Que Variable10 e o indice 77 no LE (lembro-me de 68 = Variable01 ... 77 = Variable10, mas nao confirmei). O auto-teste
-   so prova que o atributo e escrevivel, nao qual e. Se o indice estiver errado, o sinal ainda funciona (qualquer atributo
-   a 0 serve), mas confirme no log que o valor lido e 0 antes e 1 durante a janela.
- - Escudo: nao sei se o Themis resolve IsEquippedLeftType(11) como escudo. Se nao, com escudo cai na pasta da arma da
-   mao direita (continua a tocar um counter, mas o de uma mao). O log do Themis (linhas [OAR-LE EQUIPPEDTYPE]
-   hand=left expected=11 resolved=...) mostra o valor real.
- - Que o atributo fica estavel entre o "ligar" e o OAR/DAR escolher o clip (a DLL liga-o na abertura da janela, antes do ataque).
+COMO INSTALAR (no mod "Guard Counters For BFCO And MCO V", ou onde instalar o resto)
+ Data\SKSE\Plugins\GuardCountersLE.dll  e  GuardCounters.ini
+ Data\Scripts\GuardCountersMCM.pex, GuardCountersFX.pex, GuardCountersNative.pex
+ Data\GuardCountersLE.esp   (ativar DEPOIS do "Inpa Sekiro Combat.esp": tem-no como mestre)
+ Os WAV ja estao em Data\Sound\FX\GuardCounters\ (CounterReady.wav, CounterSwing.wav) e as animacoes DAR como antes.
+ Quest nova com scripts: carregue o jogo e abra o menu "Guard Counters" (MCM). Funciona num save existente.
 
 COMO TESTAR
- 1. Compilar no Actions e copiar GuardCountersLE.dll + GuardCounters.ini para Data\SKSE\Plugins.
- 2. Juntar a pasta meshes das animacoes DAR ao mod.
- 3. No Themis_OAR.ini: uParserLogLimit=3000 (e, se quiser ver a avaliacao do counter, uConditionLogLimit/uActivateLogLimit altos).
- 4. Jogo: carregar um save, desembainhar, fazer um deflect com o Inpa e atacar dentro de 1,5 s.
- 5. Enviar GuardCountersLE.log e Themis_OAR.log. No GuardCountersLE.log procurar "signal self-test", "signal OK",
-    "signal actor value 77 -> 1 (window opened), reads 1.00" e "counter consumed".
- No Themis_OAR.log procurar "GuardCounters" / "_CustomConditions\2000000010" nas linhas do parser: devem aparecer
- reconhecidas (unknown=0), e [OAR-LE ACTIVATE] com repl='...\2000000010\mco_attack1.hkx' no momento do golpe.
+ 1. Arranque o jogo e abra o MCM: a pagina Geral diz se "Sinal do counter a funcionar" e sim.
+ 2. Deflect com o Inpa e ataque dentro da janela. Deve ouvir o som de pronto, ver a marca, ouvir o som do golpe, ficar imune,
+    e o inimigo atingido cambalear.
+ 3. Envie o GuardCountersLE.log (Documentos\My Games\Skyrim\SKSE\) e o Papyrus log (Documentos\My Games\Skyrim\Logs\Script\
+    Papyrus.0.log, procure "GuardCounters"). Linhas uteis no log da DLL: "hit receiver registered", "event: ... sent to the menu
+    script", "the counter hit <formid>", "forced stagger on ... magnitude ... ok/FAILED". No Papyrus.0.log: "GuardCountersFX:
+    registered", "event 'ready' received", e erros "sound ... was not found" / "mark spell was not found".
+
+NAO VERIFICADO (so o jogo diz)
+ - Nao pude compilar aqui (sem MSBuild nem o compilador Papyrus). O codigo C++ novo foi verificado contra os cabecalhos reais
+   do SKSE 1.7.3 (nomes e tipos); os scripts Papyrus e o ESP nao puderam ser compilados/abertos aqui.
+ - O ESP foi gerado por script, copiando o formato dos registos do Inpa e do FreeClimb. Se o jogo recusar o ESP ou os sons
+   ficarem mudos, diga-me: o log do Papyrus indica "not found". Abrir o ESP no xEdit/CK e ver os avisos tambem ajuda.
+ - O stagger forcado usa as variaveis staggerDirection e staggerMagnitude e o evento staggerStart (como o original). A direcao
+   e fixa a 0; se o inimigo cambalear para o lado errado, diga-me.
+ - O Inpa tambem liga e desliga o SetGhost no parry: pode haver uma sobreposicao curta. A nossa imunidade so dura o golpe e um
+   temporizador de seguranca (ArmedHoldSeconds + 1,5 s) desliga-a se o fim do golpe falhar.
+ - A marca e um modelo fixo: a cor/brilho do mod original (GlowColor*) nao se ajustam.
+ - O dano abaixo de 100% e uma aproximacao (devolve vida ao inimigo).
+ - O dano extra parte do dano base da arma; nao conta perks nem encantamentos.
 
 NOTAS
- As animacoes sao do black364 (Elden Counter) e os sons do dTry; o README original diz que nao podem ser redistribuidas
- sem autorizacao do autor, por isso o pacote convertido e para uso pessoal.
- Continuam por implementar: invencibilidade, stagger forcado do inimigo, brilho, sons e menu proprio (MCM).
+ As animacoes sao do black364 (Elden Counter) e os sons do dTry; o README original diz que nao podem ser redistribuidas sem
+ autorizacao do autor, por isso o pacote convertido e para uso pessoal.
