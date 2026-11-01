@@ -7,3 +7,4 @@ Function DamageActorValue(string asValueName, float afDamage) native
 Function RestoreActorValue(string asValueName, float afAmount) native
 bool Function IsDead() native
 bool Function DispelSpell(Spell akSpell) native
+bool Function IsGhost() native
