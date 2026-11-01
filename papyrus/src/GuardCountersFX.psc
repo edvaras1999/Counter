@@ -1,14 +1,20 @@
 Scriptname GuardCountersFX extends Quest
 { Guard Counters LE - counter effects. The DLL decides when a counter is ready, used, over, or has hit someone,
-  and tells this script through the mod event "GuardCounters_Event" (what = ready | swing | expire | end | hit).
-  This script plays the sounds, shows the Inpa Sekiro perilous mark, grants total damage immunity (SetGhost,
-  the method Inpa Sekiro uses during a parry) and adds the extra counter damage. All options come from the DLL. }
+  and tells this script through the mod event "GuardCounters_Event"
+  (what = ready | swing | expire | end | hit | slow | slowend).
+  This script plays the sounds, shows the perilous mark, grants total damage immunity (SetGhost, the method Inpa
+  Sekiro uses during a parry), slows time (optional) and adds the extra counter damage. All options come from the DLL. }
 
 Sound sndReady
 Sound sndSwing
 Spell markSpell
+Spell slowSpell
 bool ghostOn
 bool markShown
+bool slowOn
+bool active
+bool swinging
+float activeUntil
 int evtSeen
 
 Event OnInit()
@@ -24,39 +30,77 @@ Event OnGuardCountersEvent(string a_eventName, string a_what, float a_value, For
     Actor pl = Game.GetPlayer()
 
     if a_what == "ready"
+        active = true
+        swinging = false
+        activeUntil = Utility.GetCurrentRealTime() + GuardCountersNative.GetFloat("WindowSeconds") + GuardCountersNative.GetFloat("ArmedHoldSeconds") + 2.0
         if GuardCountersNative.GetBool("GlowEnabled")
             ShowMark(pl)
         endIf
         if GuardCountersNative.GetBool("ReadySoundEnabled")
             PlayCounterSound(0, GuardCountersNative.GetInt("ReadySoundVolume"))
         endIf
-        RegisterForSingleUpdate(GuardCountersNative.GetFloat("WindowSeconds") + 1.0)
+        ; immunity from the deflect: the counter cannot be interrupted before it starts
+        if GuardCountersNative.GetBool("Invulnerability") && GuardCountersNative.GetBool("ImmunityFromDeflect")
+            GrantGhost(pl)
+        endIf
+        RegisterForSingleUpdate(0.15)
     elseIf a_what == "swing"
+        active = true
+        swinging = true
+        activeUntil = Utility.GetCurrentRealTime() + GuardCountersNative.GetFloat("ArmedHoldSeconds") + 2.0
         HideMark(pl)
         if GuardCountersNative.GetBool("SwingSoundEnabled")
             PlayCounterSound(1, GuardCountersNative.GetInt("SwingSoundVolume"))
         endIf
         if GuardCountersNative.GetBool("Invulnerability")
-            pl.SetGhost(true)
-            ghostOn = true
+            GrantGhost(pl)
         endIf
-        RegisterForSingleUpdate(GuardCountersNative.GetFloat("ArmedHoldSeconds") + 1.5)
+        RegisterForSingleUpdate(0.15)
+    elseIf a_what == "slow"
+        StartSlow(pl)
+    elseIf a_what == "slowend"
+        StopSlow(pl)
     elseIf a_what == "expire"
+        active = false
         HideMark(pl)
+        if !swinging
+            ReleaseGhost(pl)
+        endIf
     elseIf a_what == "end"
+        active = false
+        swinging = false
         HideMark(pl)
         ReleaseGhost(pl)
+        StopSlow(pl)
     elseIf a_what == "hit"
         ApplyExtraDamage(pl, a_sender as Actor, a_value)
     endIf
 EndEvent
 
-; Safety net: if an "end" event is ever missed, nothing stays on (no stuck immunity, no stuck mark).
+; While a counter is active this keeps the immunity on (Inpa Sekiro clears SetGhost itself when its parry ends, which
+; would cut ours) and is also the safety net: if an "end" event is ever missed, nothing stays on.
 Event OnUpdate()
     Actor pl = Game.GetPlayer()
-    HideMark(pl)
-    ReleaseGhost(pl)
+    if active && Utility.GetCurrentRealTime() < activeUntil
+        if ghostOn && !pl.IsGhost()
+            pl.SetGhost(true)
+        endIf
+        RegisterForSingleUpdate(0.15)
+    else
+        active = false
+        swinging = false
+        HideMark(pl)
+        ReleaseGhost(pl)
+        StopSlow(pl)
+    endIf
 EndEvent
+
+Function GrantGhost(Actor pl)
+    if !ghostOn || !pl.IsGhost()
+        pl.SetGhost(true)
+    endIf
+    ghostOn = true
+EndFunction
 
 Function ReleaseGhost(Actor pl)
     if ghostOn
@@ -65,7 +109,7 @@ Function ReleaseGhost(Actor pl)
     endIf
 EndFunction
 
-; The mark is the perilous kanji of Inpa Sekiro, in our own magic effect (no Inpa script runs).
+; The mark is the perilous kanji, in our own magic effect (own model and light; nothing from Inpa Sekiro runs).
 Function ShowMark(Actor pl)
     if markSpell == None
         markSpell = Game.GetFormFromFile(0x806, "GuardCountersLE.esp") as Spell
@@ -83,6 +127,30 @@ Function HideMark(Actor pl)
         pl.DispelSpell(markSpell)
     endIf
     markShown = false
+EndFunction
+
+; Optional slow time: the vanilla Slow Time shout spell (Skyrim.esm 00048AD2), cast on the player and dispelled when
+; the counter ends or after SlowTimeSeconds, whichever comes first.
+Function StartSlow(Actor pl)
+    if slowOn
+        return
+    endIf
+    if slowSpell == None
+        slowSpell = Game.GetFormFromFile(0x048AD2, "Skyrim.esm") as Spell
+    endIf
+    if slowSpell == None
+        Debug.Trace("GuardCountersFX: the Slow Time spell (Skyrim.esm 00048AD2) was not found")
+        return
+    endIf
+    slowSpell.Cast(pl, pl)
+    slowOn = true
+EndFunction
+
+Function StopSlow(Actor pl)
+    if slowOn && slowSpell != None
+        pl.DispelSpell(slowSpell)
+    endIf
+    slowOn = false
 EndFunction
 
 ; which: 0 = counter ready, 1 = counter attack. Volume in percent (0-200); above 100 the sound is layered.

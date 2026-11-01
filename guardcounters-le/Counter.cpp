@@ -1,4 +1,4 @@
-// Counter.cpp - Guard Counters LE, versao 0.3 (primeira fase de efeitos).
+// Counter.cpp - Guard Counters LE, versao 0.4 (protecao desde o deflect, stagger forcado, abrandar o tempo).
 //
 // O que faz (so MCO, so deflect do Inpa Sekiro):
 //   1. Deteta um deflect bem-sucedido do Inpa Sekiro: a variavel de animacao "bNoStagger" do jogador sobe a TRUE
@@ -52,10 +52,19 @@ namespace
 	int		g_signalMod = -1;				// modificador do atributo que funcionou no auto-teste (-1 = ainda nao testado / falhou)
 	bool	g_signalOn = false;				// o sinal esta a 1 por nossa causa
 	bool	g_signalTested = false;
-	bool	g_armorSet = false;				// mexemos em bNoStagger (super armor)
-	bool	g_armorPrev = false;			// valor que bNoStagger tinha antes
+	bool	g_armorWrote = false;			// escrevemos bNoStagger = TRUE (super armor): temos de o desligar no fim
 	UInt32	g_hitIds[8];					// inimigos ja atingidos por este counter
 	int		g_hitCount = 0;
+	TESObjectREFR *	g_aggrRef = NULL;		// ultimo inimigo que atingiu o jogador (para saber quem foi o deflect)
+	UInt32	g_aggrId = 0;
+	DWORD	g_aggrTime = 0;
+	TESObjectREFR *	g_target = NULL;		// o inimigo do deflect (alvo do stagger forcado)
+	UInt32	g_targetId = 0;
+	bool	g_targetStaggered = false;
+	DWORD	g_staggerAt = 0;				// instante em que o inimigo do deflect leva o stagger
+	bool	g_slowSent = false;				// o evento "slow" foi enviado e ainda nao o "slowend"
+	UInt32	g_lastAttackState = 0xFFFFFFFF;
+	int		g_hitLog = 0;
 
 	const char * StateName(int s)
 	{
@@ -165,35 +174,57 @@ namespace
 		SetSignal(player, value != 0, why);
 	}
 
-	// ---- super armor: o jogador nao leva stagger durante o golpe (bNoStagger a TRUE, como o Inpa no deflect)
+	// ---- super armor: o jogador nao leva stagger enquanto o counter esta pronto ou a decorrer (bNoStagger a TRUE,
+	// como o Inpa faz no deflect). O Inpa volta a pos-la a false ao fim de 1.5-4.2 s, por isso re-afirmamos.
 	bool DeflectVarIsNoStagger() { return _stricmp(g_cfg.deflectVariable, "bNoStagger") == 0; }
 
-	void ArmorOn(Actor * player)
+	void ArmorKeep(Actor * player, const char * why)
 	{
-		if(!g_cfg.superArmorOn || g_armorSet) return;
+		if(!g_cfg.superArmorOn) return;
 
 		bool current = false;
-		ReadGraphBool(player, "bNoStagger", current);
-		g_armorPrev = current;
-		g_armorSet = true;
-		if(!current)
-		{
-			Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), true);
-			if(DeflectVarIsNoStagger()) g_prevDeflect = true;		// nao e um deflect novo
-			if(g_cfg.verbose) _MESSAGE("counter: super armor on (bNoStagger = TRUE)");
-		}
+		if(!ReadGraphBool(player, "bNoStagger", current) || current) return;
+
+		Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), true);
+		g_armorWrote = true;
+		if(DeflectVarIsNoStagger()) g_prevDeflect = true;		// nao e um deflect novo
+		if(g_cfg.verbose) _MESSAGE("counter: super armor (bNoStagger = TRUE) - %s", why);
 	}
 
 	void ArmorOff(Actor * player)
 	{
-		if(!g_armorSet) return;
-		g_armorSet = false;
-		if(!g_armorPrev)
-		{
-			Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), false);
-			if(DeflectVarIsNoStagger()) g_prevDeflect = false;
-			if(g_cfg.verbose) _MESSAGE("counter: super armor off (bNoStagger = false)");
-		}
+		if(!g_armorWrote) return;
+		g_armorWrote = false;
+		Engine::SetGraphVariableBool((TESObjectREFR *)player, BSFixedString("bNoStagger"), false);
+		if(DeflectVarIsNoStagger()) g_prevDeflect = false;
+		if(g_cfg.verbose) _MESSAGE("counter: super armor off (bNoStagger = false)");
+	}
+
+	// ---- stagger forcado num inimigo (anula o bNoStagger dele, define a forca e envia o evento)
+	void ApplyStagger(Actor * victim, const char * why)
+	{
+		TESObjectREFR * ref = (TESObjectREFR *)victim;
+		Engine::SetGraphVariableBool(ref, BSFixedString("bNoStagger"), false);
+		const bool a = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerDirection"), 0.0f);
+		const bool b = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerMagnitude"), g_cfg.staggerMagnitude);
+		const bool c = Engine::NotifyAnimationGraph(ref, BSFixedString("staggerStart"));
+		_MESSAGE("counter: forced stagger on %08X (%s, magnitude %.2f): direction %s, magnitude %s, event %s",
+				 (unsigned)victim->formID, why, (double)g_cfg.staggerMagnitude, a ? "ok" : "FAILED", b ? "ok" : "FAILED", c ? "sent" : "FAILED");
+	}
+
+	// O inimigo do deflect leva o stagger mesmo que o golpe de counter nao o atinja.
+	void StaggerDeflected()
+	{
+		g_targetStaggered = true;
+		TESObjectREFR * ref = g_target;
+		g_target = NULL;
+
+		if(!ref || !Engine::Readable(ref, 0x100) || ref->formID != g_targetId) { _MESSAGE("counter: the deflected enemy is no longer valid - no stagger"); return; }
+		if(ref->formType != kFormType_Character) return;
+
+		Actor * victim = (Actor *)ref;
+		if(!Engine::ActorIsBuilt(victim) || Engine::LifeState(victim) != Engine::kLifeState_Alive) return;
+		ApplyStagger(victim, "deflected enemy");
 	}
 
 	// ---- janela
@@ -203,17 +234,35 @@ namespace
 		g_state = kReady;
 		g_stateSince = now;
 		g_attackSeen = false;
-		_MESSAGE("counter: deflect detected (%u ms after blocking) - counter ready for %.2f s", (unsigned)sinceBlocking, (double)g_cfg.windowSeconds);
-		Options::SendEvent("ready", 0.0f, NULL);
+		g_lastAttackState = 0xFFFFFFFF;
+		g_hitCount = 0;
+		g_hitLog = 0;
+		g_targetStaggered = false;
+
+		// o inimigo que acabou de ser deflectido: o ultimo que atingiu (ou tentou atingir) o jogador
+		g_target = NULL;
+		g_targetId = 0;
+		if(g_aggrRef && (now - g_aggrTime) < 2500)
+		{
+			g_target = g_aggrRef;
+			g_targetId = g_aggrId;
+		}
+
+		_MESSAGE("counter: deflect detected (%u ms after blocking) - counter ready for %.2f s (deflected enemy %08X)",
+				 (unsigned)sinceBlocking, (double)g_cfg.windowSeconds, (unsigned)g_targetId);
+		ArmorKeep(player, "window opened");
+		Options::SendEvent("ready", 0.0f, NULL);			// o script toca o som, mostra a marca e (se pedido) liga a imunidade
 	}
 
 	// Fecha: a janela expirou sem ataque ('swung' = false) ou o golpe acabou ('swung' = true).
 	void Close(Actor * player, const char * why, bool swung)
 	{
 		SetTrigger(player, 0, why);
-		if(swung) ArmorOff(player);
+		ArmorOff(player);
 		g_state = kIdle;
 		g_attackSeen = false;
+		g_target = NULL;
+		if(g_slowSent) { g_slowSent = false; Options::SendEvent("slowend", 0.0f, NULL); }
 		Options::SendEvent(swung ? "end" : "expire", 0.0f, NULL);
 	}
 
@@ -286,21 +335,38 @@ namespace
 		// 4. a janela / o golpe em curso
 		if(g_state == kReady)
 		{
+			ArmorKeep(player, "re-asserted while ready");
 			if(now - g_stateSince > (DWORD)(g_cfg.windowSeconds * 1000.0f))
 				Close(player, "window expired without an attack", false);
 		}
 		else if(g_state == kConsumed)
 		{
+			ArmorKeep(player, "re-asserted during the counter attack");
+
+			const DWORD elapsed = now - g_stateSince;
 			const UInt32 attack = Engine::AttackState(player);
-			if(attack != 0 && !g_attackSeen)
+			if(attack != g_lastAttackState)
 			{
-				g_attackSeen = true;
-				if(g_cfg.verbose) _MESSAGE("counter: the attack started (attack state %u) %u ms after the press", (unsigned)attack, (unsigned)(now - g_stateSince));
+				if(g_cfg.verbose) _MESSAGE("counter: attack state %u -> %u (%u ms after the press)", (unsigned)(g_lastAttackState == 0xFFFFFFFF ? 0 : g_lastAttackState), (unsigned)attack, (unsigned)elapsed);
+				g_lastAttackState = attack;
+			}
+			if(attack != 0) g_attackSeen = true;
+
+			// o inimigo do deflect leva o stagger forcado, mesmo que o golpe nao o atinja
+			if(g_cfg.staggerOn && g_cfg.staggerDeflectedOn && g_target && !g_targetStaggered && now >= g_staggerAt)
+				StaggerDeflected();
+
+			// abrandar o tempo so dura SlowTimeSeconds
+			if(g_slowSent && elapsed >= (DWORD)(g_cfg.slowTimeSeconds * 1000.0f))
+			{
+				g_slowSent = false;
+				Options::SendEvent("slowend", 0.0f, NULL);
 			}
 
-			if(g_attackSeen && attack == 0)
+			// o golpe acabou quando o estado de ataque volta a 0, mas so depois do tempo minimo (o estado pode cair a 0 cedo)
+			if(g_attackSeen && attack == 0 && elapsed >= (DWORD)(g_cfg.minSwingSeconds * 1000.0f))
 				Close(player, "the counter attack finished", true);
-			else if(now - g_stateSince > (DWORD)(g_cfg.armedHoldSeconds * 1000.0f))
+			else if(elapsed > (DWORD)(g_cfg.armedHoldSeconds * 1000.0f))
 				Close(player, g_attackSeen ? "hold timeout (attack still running)" : "hold timeout (the attack never started)", true);
 		}
 	}
@@ -316,7 +382,10 @@ namespace
 		g_state = kConsumed;
 		g_stateSince = now;
 		g_attackSeen = false;
+		g_lastAttackState = 0xFFFFFFFF;
 		g_hitCount = 0;
+		g_hitLog = 0;
+		g_staggerAt = now + (DWORD)g_cfg.staggerDelayMs;
 
 		g_cooldownStart = now;
 		g_cooldownMs = (DWORD)(g_cfg.cooldownSeconds * 1000.0f);
@@ -329,8 +398,13 @@ namespace
 			_MESSAGE("counter: stamina %.1f -> %.1f (cost %.1f)", (double)current, (double)(current - cost), (double)cost);
 		}
 
-		ArmorOn(player);
-		Options::SendEvent("swing", 0.0f, NULL);		// o script toca o som do golpe e liga a imunidade
+		ArmorKeep(player, "counter attack");
+		Options::SendEvent("swing", 0.0f, NULL);		// o script toca o som do golpe e garante a imunidade
+		if(g_cfg.slowTimeOn)
+		{
+			g_slowSent = true;
+			Options::SendEvent("slow", 0.0f, NULL);	// o script abranda o tempo
+		}
 	}
 
 	void OnInput(bool attackPressed)
@@ -342,7 +416,8 @@ namespace
 			// o jogador ainda esta a ser construido, ou morreu: nada a perguntar ao jogo
 			if(g_state != kIdle) Options::SendEvent("end", 0.0f, NULL);
 			g_state = kIdle;
-			g_armorSet = false;
+			g_armorWrote = false;
+			g_slowSent = false;
 			g_primed = false;
 			return;
 		}
@@ -357,21 +432,16 @@ namespace
 		if(attackPressed) OnAttackPressed(player);
 	}
 
-	// ------------------------------------------------------------------ hits do jogador durante o counter
-	void ApplyStagger(Actor * victim)
-	{
-		TESObjectREFR * ref = (TESObjectREFR *)victim;
-		const bool a = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerDirection"), 0.0f);
-		const bool b = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerMagnitude"), g_cfg.staggerMagnitude);
-		const bool c = Engine::NotifyAnimationGraph(ref, BSFixedString("staggerStart"));
-		_MESSAGE("counter: forced stagger on %08X (magnitude %.2f): direction %s, magnitude %s, event %s",
-				 (unsigned)victim->formID, (double)g_cfg.staggerMagnitude, a ? "ok" : "FAILED", b ? "ok" : "FAILED", c ? "sent" : "FAILED");
-	}
-
+	// ------------------------------------------------------------------ hits
 	void OnCounterHit(TESHitEvent * evn)
 	{
 		Actor * player = ThePlayer();
-		if(!player || !evn->caster || evn->caster != (TESObjectREFR *)player) return;
+		if(g_cfg.verbose && g_hitLog < 12)
+		{
+			++g_hitLog;
+			_MESSAGE("counter: hit by the player on %08X (type %u, flags %u) while the counter attack runs",
+					 (unsigned)(evn->target ? evn->target->formID : 0), (unsigned)(evn->target ? evn->target->formType : 0), (unsigned)evn->flags);
+		}
 		if(!evn->target || evn->target == (TESObjectREFR *)player) return;
 		if(evn->target->formType != kFormType_Character) return;
 		if(evn->flags & TESHitEvent::kFlag_Bash) return;
@@ -385,8 +455,41 @@ namespace
 
 		_MESSAGE("counter: the counter hit %08X (flags %u)", (unsigned)victim->formID, (unsigned)evn->flags);
 
-		if(g_cfg.staggerOn) ApplyStagger(victim);
+		if(g_cfg.staggerOn)
+		{
+			ApplyStagger(victim, "counter hit");
+			if(victim->formID == g_targetId) g_targetStaggered = true;
+		}
 		if(g_cfg.damagePercent != 100) Options::SendEvent("hit", (float)g_cfg.damagePercent, (TESForm *)victim);
+	}
+
+	void OnHitEvent(TESHitEvent * evn)
+	{
+		Actor * player = ThePlayer();
+		if(!player || !evn->target || !evn->caster) return;
+
+		if(evn->target == (TESObjectREFR *)player)
+		{
+			// o jogador foi atingido (ou bloqueou): guarda quem foi, e protege o stagger se ha um counter ativo
+			if(evn->caster != (TESObjectREFR *)player && evn->caster->formType == kFormType_Character)
+			{
+				g_aggrRef = evn->caster;
+				g_aggrId = evn->caster->formID;
+				g_aggrTime = GetTickCount();
+			}
+			if(g_state != kIdle)
+			{
+				if(g_cfg.verbose && g_hitLog < 12)
+				{
+					++g_hitLog;
+					_MESSAGE("counter: the player was hit by %08X (flags %u) while the counter is %s", (unsigned)evn->caster->formID, (unsigned)evn->flags, StateName(g_state));
+				}
+				ArmorKeep(player, "the player was hit");
+			}
+			return;
+		}
+
+		if(g_state == kConsumed && evn->caster == (TESObjectREFR *)player) OnCounterHit(evn);
 	}
 
 	class HitSink : public BSTEventSink<TESHitEvent>
@@ -394,7 +497,7 @@ namespace
 	public:
 		virtual EventResult ReceiveEvent(TESHitEvent * evn, EventDispatcher<TESHitEvent> * dispatcher)
 		{
-			if(evn && g_state == kConsumed) OnCounterHit(evn);
+			if(evn) OnHitEvent(evn);
 			return kEvent_Continue;
 		}
 	};
@@ -470,7 +573,10 @@ void CounterReset()
 	g_cooldownMs = 0;
 	g_signalOn = false;
 	g_signalTested = false;			// repetir o auto-teste no proximo evento de input (limpa um sinal esquecido no save)
-	g_armorSet = false;
+	g_armorWrote = false;
+	g_slowSent = false;
+	g_target = NULL;
+	g_aggrRef = NULL;
 	g_hitCount = 0;
 	_MESSAGE("counter: state reset");
 }

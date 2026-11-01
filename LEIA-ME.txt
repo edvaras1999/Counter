@@ -1,63 +1,68 @@
-GUARD COUNTERS LE - VERSAO 0.3 (primeira fase de efeitos)
+GUARD COUNTERS LE - VERSAO 0.4
 Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE: so MCO, com o Inpa Sekiro,
 o Themis (OAR/DAR/BDI do LE) e o SkyUI (menu).
 
-O QUE ESTA NA 0.3 (alem da 0.2: deflect do Inpa -> janela -> animacao de counter -> estamina)
- - SONS: counter pronto e golpe de counter, pelo audio do jogo (descritores SNDR + marcadores SOUN no ESP, tocados por Papyrus,
-   como o Inpa), com volume 0-200% (acima de 100 sobrepoe duas copias).
- - MARCA (o "brilho"): a marca perilous do Inpa (o kanji) no jogador enquanto o counter esta pronto; desaparece ao atacar.
-   Usa a luz e o modelo do Inpa num efeito magico nosso; NAO corre nenhum script do Inpa.
- - MENU (MCM "Guard Counters", EN/PT): janela, pausa, estamina, deteccao do deflect, marca, sons, imunidade, super armadura,
-   stagger forcado e dano do counter; perfil guardavel; repor valores de fabrica.
- - STAGGER FORCADO: cada inimigo atingido pelo golpe de counter leva o evento de stagger (staggerStart, com a forca do menu).
- - DANO DE COUNTER: acima de 100% soma dano extra (parte do dano base da arma); abaixo devolve parte (aproximado).
- - IMUNIDADE TOTAL ao dano durante o golpe (SetGhost, o metodo que o Inpa usa no parry) e SUPER ARMADURA (sem stagger em ti).
- Nao repomos vida: a imunidade e total, como pediste.
+O QUE MUDOU NA 0.4 (a partir do teste da 0.3)
+ O log da 0.3 mostrou um unico counter usado e nenhum "the counter hit": o golpe foi dado por terminado logo depois de
+ comecar, o stagger forcado nunca chegou a correr e o jogador era interrompido. Corrigi:
+ 1. IMUNIDADE DESDE O DEFLECT. A imunidade total ao dano (SetGhost, como o Inpa) agora comeca quando o deflect arma o
+    counter e dura ate o golpe de counter acabar (opcao "Imunidade desde o deflect", ligada por omissao). O script reaplica-a
+    a cada 0,15 s enquanto o counter esta ativo: o Inpa tambem faz SetGhost(false) quando o parry dele acaba e cortava a nossa.
+ 2. IMUNIDADE A STAGGER. O bNoStagger do jogador e ligado quando o counter fica pronto e reaplicado (a) a cada leitura
+    enquanto o counter esta ativo e (b) no instante em que o jogador leva um golpe (receptor de hits). Desligado no fim.
+ 3. TEMPO MINIMO DO GOLPE. O golpe de counter conta como ativo pelo menos MinSwingSeconds (1.2 s) depois de atacar, mesmo que o
+    estado de ataque do jogo caia a 0 cedo. Antes disso os hits do golpe nao eram apanhados.
+ 4. STAGGER FORCADO "INDEPENDENTE DE TUDO". (a) Cada inimigo atingido pelo golpe leva o stagger. (b) NOVO: o inimigo do deflect
+    (o ultimo que atingiu ou foi bloqueado pelo jogador) leva o stagger 250 ms depois do golpe de counter comecar, mesmo que o
+    golpe nao o atinja. Nos dois casos anulamos o bNoStagger do inimigo antes de enviar staggerStart.
+ 5. MARCA SEM O INPA. O ESP ja nao tem o Inpa como mestre: leva o seu proprio objeto de arte e luz, e o modelo e a textura do kanji
+    vao no nosso pacote (meshes\GuardCounters\kanji_mark.nif, textures\effectsSekiro\perilnew.dds). A marca nao depende do ESP
+    nem dos ficheiros do Inpa.
+ 6. ABRANDAR O TEMPO (opcional, desligado). Opcao "Abrandar o tempo no counter" no menu: lanca o feitico do grito Slow Time
+    do Skyrim (Skyrim.esm 00048AD2) quando o golpe de counter comeca e dissipa-o ao fim de SlowTimeSeconds (1,0 s) ou quando
+    o counter acaba.
+ 7. MAIS DIAGNOSTICO no GuardCountersLE.log: transicoes do estado de ataque com tempos, hits do jogador durante o golpe, hits
+    que o jogador leva durante o counter, inimigo do deflect capturado.
 
 FICHEIROS DESTA ENTREGA (so o que mudou ou e novo)
- guardcounters-le\Counter.cpp, Counter.h, GuardCountersLE.cpp, GuardCountersLE.vcxproj   (alterados)
- guardcounters-le\Options.cpp, Options.h                                                 (novos: opcoes, funcoes do menu, eventos)
- papyrus\src\GuardCountersMCM.psc, GuardCountersFX.psc, GuardCountersNative.psc          (novos)
- papyrus\stubs\*.psc, papyrus\TESV_Papyrus_Flags.flg                                     (novos: so servem para compilar)
- papyrus\GuardCountersLE.esp                                                             (novo, ja gerado)
- tools\make_gc_esp.py                                                                    (novo: gera o ESP)
- .github\workflows\compile-papyrus.yml                                                   (novo: compila os 3 scripts)
- GuardCounters.ini                                                                       (alterado: chaves novas; defaults = os que testaste)
+ guardcounters-le\Counter.cpp, Options.cpp, Options.h, GuardCountersLE.cpp           (alterados: compilar a DLL no Actions)
+ papyrus\src\GuardCountersFX.psc, GuardCountersMCM.psc                               (alterados)
+ papyrus\stubs\Actor.psc (alterado), papyrus\stubs\Utility.psc (novo)                (so servem para compilar)
+ papyrus\GuardCountersLE.esp                                                         (regenerado: sem mestre Inpa)
+ tools\make_gc_esp.py                                                                (alterado)
+ GuardCounters.ini                                                                   (chaves novas)
+ recursos\meshes\GuardCounters\kanji_mark.nif, recursos\textures\effectsSekiro\perilnew.dds   (novos: copiar para o mod, ver abaixo)
 
-COMO COMPILAR
- 1. DLL: Actions > "Build Guard Counters LE" > Run workflow (como antes). O vcxproj agora compila tambem o Options.cpp e o
-    GameEvents.cpp do SKSE. Se falhar, envie o build.log.
- 2. Scripts: Actions > "Compilar scripts Papyrus" > Run workflow. Descarregue o artefacto "papyrus": traz
-    GuardCountersMCM.pex, GuardCountersFX.pex e GuardCountersNative.pex. Se falhar, envie o papyrus-build.log.
-
-COMO INSTALAR (no mod "Guard Counters For BFCO And MCO V", ou onde instalar o resto)
- Data\SKSE\Plugins\GuardCountersLE.dll  e  GuardCounters.ini
- Data\Scripts\GuardCountersMCM.pex, GuardCountersFX.pex, GuardCountersNative.pex
- Data\GuardCountersLE.esp   (ativar DEPOIS do "Inpa Sekiro Combat.esp": tem-no como mestre)
- Os WAV ja estao em Data\Sound\FX\GuardCounters\ (CounterReady.wav, CounterSwing.wav) e as animacoes DAR como antes.
- Quest nova com scripts: carregue o jogo e abra o menu "Guard Counters" (MCM). Funciona num save existente.
+COMO INSTALAR A 0.4
+ 1. Compilar a DLL ("Build Guard Counters LE") e os scripts ("Compilar scripts Papyrus"), como antes.
+ 2. Substituir: GuardCountersLE.dll, GuardCounters.ini, os 3 .pex e o GuardCountersLE.esp.
+ 3. Copiar a pasta "recursos\meshes" e "recursos\textures" para dentro do mod (ficam em Data\meshes\ e Data\textures\).
+ 4. O ESP novo nao tem o Inpa como mestre. Num save em que ja usou o ESP antigo: carregue, abra o menu, e se algo ficar estranho
+    comece com um save anterior a primeira vez que usou o ESP (o ESP mudou de mestres e de FormIDs).
+ 5. O INI tem chaves novas; se mantiver o seu, acrescente as do [Combat] (ImmunityFromDeflect, StaggerDeflectedEnemy,
+    StaggerDelayMs, SlowTime, SlowTimeSeconds) e [LE] (MinSwingSeconds), ou use o novo.
 
 COMO TESTAR
- 1. Arranque o jogo e abra o MCM: a pagina Geral diz se "Sinal do counter a funcionar" e sim.
- 2. Deflect com o Inpa e ataque dentro da janela. Deve ouvir o som de pronto, ver a marca, ouvir o som do golpe, ficar imune,
-    e o inimigo atingido cambalear.
- 3. Envie o GuardCountersLE.log (Documentos\My Games\Skyrim\SKSE\) e o Papyrus log (Documentos\My Games\Skyrim\Logs\Script\
-    Papyrus.0.log, procure "GuardCounters"). Linhas uteis no log da DLL: "hit receiver registered", "event: ... sent to the menu
-    script", "the counter hit <formid>", "forced stagger on ... magnitude ... ok/FAILED". No Papyrus.0.log: "GuardCountersFX:
-    registered", "event 'ready' received", e erros "sound ... was not found" / "mark spell was not found".
+ Deflect com o Inpa, atacar dentro da janela. Deve: tocar o som de pronto, aparecer a marca, ficar imune ate o golpe acabar,
+ e o inimigo cambalear (o do golpe e o do deflect). Envie o GuardCountersLE.log e, se a imunidade, a marca ou o som falharem, o
+ Papyrus.0.log (Documentos\My Games\Skyrim\Logs\Script\, procure "GuardCounters").
+ Linhas uteis no log da DLL: "deflect detected ... (deflected enemy <formid>)", "attack state X -> Y (N ms after the press)",
+ "the counter hit <formid>", "forced stagger on <formid> (counter hit | deflected enemy)", "the player was hit by <formid> ... while
+ the counter is ready|consumed", "super armor ... re-asserted".
 
 NAO VERIFICADO (so o jogo diz)
- - Nao pude compilar aqui (sem MSBuild nem o compilador Papyrus). O codigo C++ novo foi verificado contra os cabecalhos reais
-   do SKSE 1.7.3 (nomes e tipos); os scripts Papyrus e o ESP nao puderam ser compilados/abertos aqui.
- - O ESP foi gerado por script, copiando o formato dos registos do Inpa e do FreeClimb. Se o jogo recusar o ESP ou os sons
-   ficarem mudos, diga-me: o log do Papyrus indica "not found". Abrir o ESP no xEdit/CK e ver os avisos tambem ajuda.
- - O stagger forcado usa as variaveis staggerDirection e staggerMagnitude e o evento staggerStart (como o original). A direcao
-   e fixa a 0; se o inimigo cambalear para o lado errado, diga-me.
- - O Inpa tambem liga e desliga o SetGhost no parry: pode haver uma sobreposicao curta. A nossa imunidade so dura o golpe e um
-   temporizador de seguranca (ArmedHoldSeconds + 1,5 s) desliga-a se o fim do golpe falhar.
- - A marca e um modelo fixo: a cor/brilho do mod original (GlowColor*) nao se ajustam.
- - O dano abaixo de 100% e uma aproximacao (devolve vida ao inimigo).
- - O dano extra parte do dano base da arma; nao conta perks nem encantamentos.
+ - Nao pude compilar aqui (sem MSBuild nem o compilador Papyrus). O C++ novo foi verificado contra os cabecalhos reais do SKSE
+   1.7.3 (nomes e tipos); os scripts Papyrus e o ESP nao puderam ser compilados/abertos aqui.
+ - Nao sei porque e que o SetGhost da 0.3 nao impediu a interrupcao (nao tenho o log do Papyrus dessa sessao). Se continuar a
+   ser interrompido com a 0.4, e preciso o Papyrus.0.log e a descricao do que acontece (cambalear? cair? animacao cortada?).
+   Se o jogo mantiver hit reactions em fantasmas, a imunidade a stagger (bNoStagger) e a que evita a interrupcao.
+ - O FormID do Slow Time (00048AD2) vem de uma nota de utilizador (comando "player.dispel 00048AD2" no Steam), nao de um
+   registo que eu tenha lido. E opcional; se nao existir, o log do Papyrus diz "Slow Time spell ... was not found".
+ - O stagger forcado usa staggerDirection (fixo a 0), staggerMagnitude e o evento staggerStart (como o original).
+ - O inimigo do deflect e o ultimo que atingiu ou foi bloqueado pelo jogador nos 2,5 s antes do deflect; com varios inimigos
+   pode nao ser o certo.
+ - A marca e um modelo fixo: a cor/brilho do mod original nao se ajustam. O modelo e a textura do kanji sao do Inpa Sekiro
+   (so para uso pessoal).
 
 NOTAS
  As animacoes sao do black364 (Elden Counter) e os sons do dTry; o README original diz que nao podem ser redistribuidas sem

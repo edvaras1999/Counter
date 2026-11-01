@@ -14,7 +14,7 @@
 #include <shlobj.h>
 
 #define PLUGIN_NAME				"GuardCountersLE"
-#define PLUGIN_VERSION_STRING	"0.3.0 (fase 1: sons, marca perilous, menu, stagger forcado, dano de counter, imunidade)"
+#define PLUGIN_VERSION_STRING	"0.4.0 (protecao desde o deflect, stagger forcado, marca propria, abrandar o tempo)"
 #define PLUGIN_LOG_FILE			"\\My Games\\Skyrim\\SKSE\\GuardCountersLE.log"
 
 static PluginHandle				g_pluginHandle	= kPluginHandle_Invalid;

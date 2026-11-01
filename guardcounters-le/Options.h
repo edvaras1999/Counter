@@ -16,9 +16,14 @@ struct GCConfig
 	float	staminaCost;
 	int		immunityOn;				// imunidade total ao dano durante o golpe (SetGhost, como o Inpa)
 	int		superArmorOn;			// sem stagger no jogador durante o golpe
+	int		immunityFromDeflect;	// a imunidade comeca no deflect (1) ou so quando o golpe de counter comeca (0)
 	int		staggerOn;				// stagger forcado no inimigo atingido
+	int		staggerDeflectedOn;		// stagger forcado tambem no inimigo do deflect, mesmo que o golpe nao o atinja
+	int		staggerDelayMs;			// quanto depois do golpe comecar (inimigo do deflect)
 	float	staggerMagnitude;		// 0.2 pequeno ... 1.0 maximo
 	int		damagePercent;			// dano do counter em % (100 = normal)
+	int		slowTimeOn;				// abrandar o tempo durante o golpe de counter (opcional)
+	float	slowTimeSeconds;		// quanto tempo dura o abrandamento
 	// [Feedback]
 	int		markOn;					// marca perilous (kanji) no jogador enquanto o counter esta pronto
 	int		readySoundOn;
@@ -27,6 +32,7 @@ struct GCConfig
 	int		swingSoundVolume;
 	// [LE]
 	float	armedHoldSeconds;
+	float	minSwingSeconds;		// o golpe de counter conta como ativo pelo menos este tempo
 	float	blockGraceSeconds;
 	int		requireBlocking;
 	int		requireWeaponDrawn;
