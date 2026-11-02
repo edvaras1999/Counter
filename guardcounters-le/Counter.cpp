@@ -1,4 +1,4 @@
-// Counter.cpp - Guard Counters LE, versao 0.4.1 (stagger pesado imediato e repetido, diagnostico dos hits).
+// Counter.cpp - Guard Counters LE, versao 0.4.2 (stagger com repeticao rapida quando o inimigo o recusa, stagger no deflect opcional).
 //
 // O que faz (so MCO, so deflect do Inpa Sekiro):
 //   1. Deteta um deflect bem-sucedido do Inpa Sekiro: a variavel de animacao "bNoStagger" do jogador sobe a TRUE
@@ -63,8 +63,11 @@ namespace
 
 	// Inimigos que levam o stagger pesado enquanto o golpe de counter dura: o do deflect, os que o golpe atinge e os que
 	// atacam o jogador durante o counter. O stagger e reaplicado de staggerRepeatMs em staggerRepeatMs.
-	struct StagTarget { TESObjectREFR * ref; UInt32 id; DWORD next; int count; bool active; };
+	struct StagTarget { TESObjectREFR * ref; UInt32 id; DWORD next; int count; int tries; bool oneShot; bool active; };
 	StagTarget g_stag[4];
+	int		g_staggerOk = 0;				// staggers aceites / recusados pelo grafo de animacao do inimigo (resumo no fim do counter)
+	int		g_staggerRej = 0;
+	DWORD	g_lastOpen = 0;					// instante do deflect anterior (diagnostico dos parries seguidos)
 	bool	g_slowSent = false;				// o evento "slow" foi enviado e ainda nao o "slowend"
 	UInt32	g_lastAttackState = 0xFFFFFFFF;
 	int		g_hitLog = 0;
@@ -203,30 +206,30 @@ namespace
 		if(g_cfg.verbose) _MESSAGE("counter: super armor off (bNoStagger = false)");
 	}
 
-	// ---- stagger forcado num inimigo (anula o bNoStagger dele, define a forca e envia o evento)
-	void ApplyStagger(Actor * victim, const char * why)
+	// ---- stagger forcado num inimigo (anula o bNoStagger dele, define a forca e envia o evento).
+	// Devolve true se o grafo de animacao do inimigo ACEITOU o evento. Recusa-o quando ele ja esta numa reaccao
+	// (a recuada do deflect do Inpa, um stagger anterior): por isso se volta a tentar a cada 100 ms ate ser aceite.
+	bool ApplyStagger(Actor * victim)
 	{
 		TESObjectREFR * ref = (TESObjectREFR *)victim;
 		Engine::SetGraphVariableBool(ref, BSFixedString("bNoStagger"), false);
-		const bool a = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerDirection"), 0.0f);
-		const bool b = Engine::SetGraphVariableFloat(ref, BSFixedString("staggerMagnitude"), g_cfg.staggerMagnitude);
-		const bool c = Engine::NotifyAnimationGraph(ref, BSFixedString("staggerStart"));
-		_MESSAGE("counter: forced stagger on %08X (%s, magnitude %.2f): direction %s, magnitude %s, event %s",
-				 (unsigned)victim->formID, why, (double)g_cfg.staggerMagnitude, a ? "ok" : "FAILED", b ? "ok" : "FAILED", c ? "sent" : "FAILED");
+		Engine::SetGraphVariableFloat(ref, BSFixedString("staggerDirection"), 0.0f);
+		Engine::SetGraphVariableFloat(ref, BSFixedString("staggerMagnitude"), g_cfg.staggerMagnitude);
+		return Engine::NotifyAnimationGraph(ref, BSFixedString("staggerStart"));
 	}
 
-	// Stagger num inimigo, com o motivo de cada recusa no log. Devolve false se nao foi possivel (inimigo invalido/morto).
-	bool StaggerEnemy(TESObjectREFR * ref, UInt32 id, const char * why)
+	// -1 = inimigo invalido/morto (desistir), 0 = evento recusado (tentar outra vez), 1 = aceite
+	int StaggerEnemy(TESObjectREFR * ref, UInt32 id, const char * why)
 	{
 		if(!ref || !Engine::Readable(ref, 0x100) || ref->formID != id)
 		{
 			_MESSAGE("counter: stagger skipped (%s): the enemy %08X is no longer valid", why, (unsigned)id);
-			return false;
+			return -1;
 		}
 		if(ref->formType != kFormType_Character)
 		{
 			_MESSAGE("counter: stagger skipped (%s): %08X is not a character (type %u)", why, (unsigned)id, (unsigned)ref->formType);
-			return false;
+			return -1;
 		}
 
 		Actor * victim = (Actor *)ref;
@@ -234,11 +237,10 @@ namespace
 		if(life != Engine::kLifeState_Alive)
 		{
 			_MESSAGE("counter: stagger skipped (%s): the enemy %08X is not alive (life state %u)", why, (unsigned)id, (unsigned)life);
-			return false;
+			return -1;
 		}
 
-		ApplyStagger(victim, why);
-		return true;
+		return ApplyStagger(victim) ? 1 : 0;
 	}
 
 	void ClearStagTargets()
@@ -247,7 +249,8 @@ namespace
 	}
 
 	// Acrescenta um inimigo a lista do stagger (se ainda la nao esta). 'first' = quando leva o primeiro stagger.
-	void AddStagTarget(TESObjectREFR * ref, UInt32 id, DWORD first)
+	// oneShot: depois de um stagger aceite deixa de ser staggerado (usado no deflect).
+	void AddStagTarget(TESObjectREFR * ref, UInt32 id, DWORD first, bool oneShot)
 	{
 		if(!ref || !id) return;
 		int free = -1;
@@ -261,6 +264,8 @@ namespace
 		g_stag[free].id = id;
 		g_stag[free].next = first;
 		g_stag[free].count = 0;
+		g_stag[free].tries = 0;
+		g_stag[free].oneShot = oneShot;
 		g_stag[free].active = true;
 	}
 
@@ -273,10 +278,28 @@ namespace
 			StagTarget & t = g_stag[i];
 			if(!t.active || (int)(now - t.next) < 0) continue;
 
-			const bool ok = StaggerEnemy(t.ref, t.id, t.count == 0 ? "first" : "repeat");
-			++t.count;
-			if(!ok || g_cfg.staggerRepeatMs <= 0 || t.count >= 8) t.active = false;
-			else t.next = now + (DWORD)g_cfg.staggerRepeatMs;
+			const int r = StaggerEnemy(t.ref, t.id, t.count == 0 ? "first" : "repeat");
+			if(r < 0) { t.active = false; continue; }
+
+			if(r == 1)
+			{
+				++g_staggerOk;
+				++t.count;
+				_MESSAGE("counter: forced stagger on %08X accepted (stagger %d, after %d rejected tries, magnitude %.2f)",
+						 (unsigned)t.id, t.count, t.tries, (double)g_cfg.staggerMagnitude);
+				t.tries = 0;
+				if(t.oneShot || g_cfg.staggerRepeatMs <= 0 || t.count >= 8) t.active = false;
+				else t.next = now + (DWORD)g_cfg.staggerRepeatMs;
+			}
+			else
+			{
+				++g_staggerRej;
+				++t.tries;
+				if(t.tries == 1 && g_cfg.verbose)
+					_MESSAGE("counter: stagger on %08X rejected by its animation graph (already reacting?) - retrying every 100 ms", (unsigned)t.id);
+				if(t.tries >= 40) { _MESSAGE("counter: stagger on %08X gave up after %d rejected tries", (unsigned)t.id, t.tries); t.active = false; }
+				else t.next = now + 100;
+			}
 		}
 	}
 
@@ -300,8 +323,16 @@ namespace
 			g_targetId = g_aggrId;
 		}
 
-		_MESSAGE("counter: deflect detected (%u ms after blocking) - counter ready for %.2f s (deflected enemy %08X)",
-				 (unsigned)sinceBlocking, (double)g_cfg.windowSeconds, (unsigned)g_targetId);
+		_MESSAGE("counter: deflect detected (%u ms after blocking, %u ms since the previous deflect) - counter ready for %.2f s (deflected enemy %08X)",
+				 (unsigned)sinceBlocking, (unsigned)(g_lastOpen ? now - g_lastOpen : 0), (double)g_cfg.windowSeconds, (unsigned)g_targetId);
+		g_lastOpen = now;
+		g_staggerOk = 0;
+		g_staggerRej = 0;
+
+		// opcional: o inimigo do deflect leva o stagger ja agora, o que corta o golpe seguinte dele
+		ClearStagTargets();
+		if(g_cfg.staggerOn && g_cfg.staggerOnDeflect && g_target)
+			AddStagTarget(g_target, g_targetId, now, true);
 		ArmorKeep(player, "window opened");
 		Options::SendEvent("ready", 0.0f, NULL);			// o script toca o som, mostra a marca e (se pedido) liga a imunidade
 	}
@@ -314,6 +345,7 @@ namespace
 		g_state = kIdle;
 		g_attackSeen = false;
 		g_target = NULL;
+		if(g_staggerOk || g_staggerRej) _MESSAGE("counter: stagger summary - accepted %d, rejected %d", g_staggerOk, g_staggerRej);
 		ClearStagTargets();
 		if(g_slowSent) { g_slowSent = false; Options::SendEvent("slowend", 0.0f, NULL); }
 		Options::SendEvent(swung ? "end" : "expire", 0.0f, NULL);
@@ -389,6 +421,7 @@ namespace
 		if(g_state == kReady)
 		{
 			ArmorKeep(player, "re-asserted while ready");
+			ProcessStagger(now);					// stagger no deflect (opcional)
 			if(now - g_stateSince > (DWORD)(g_cfg.windowSeconds * 1000.0f))
 				Close(player, "window expired without an attack", false);
 		}
@@ -439,7 +472,7 @@ namespace
 		g_hitLog = 0;
 		ClearStagTargets();
 		if(g_cfg.staggerOn && g_cfg.staggerDeflectedOn && g_target)
-			AddStagTarget(g_target, g_targetId, now + (DWORD)g_cfg.staggerDelayMs);
+			AddStagTarget(g_target, g_targetId, now + (DWORD)g_cfg.staggerDelayMs, false);
 
 		g_cooldownStart = now;
 		g_cooldownMs = (DWORD)(g_cfg.cooldownSeconds * 1000.0f);
@@ -514,7 +547,7 @@ namespace
 
 		if(g_cfg.staggerOn && life == Engine::kLifeState_Alive)
 		{
-			AddStagTarget((TESObjectREFR *)victim, victim->formID, now);
+			AddStagTarget((TESObjectREFR *)victim, victim->formID, now, false);
 			ProcessStagger(now);
 		}
 		if(g_cfg.damagePercent != 100) Options::SendEvent("hit", (float)g_cfg.damagePercent, (TESForm *)victim);
@@ -550,7 +583,7 @@ namespace
 				// um inimigo que ataca durante o golpe de counter leva logo o stagger pesado (e fica na lista para o repetir)
 				if(g_state == kConsumed && enemy && g_cfg.staggerOn)
 				{
-					AddStagTarget(evn->caster, evn->caster->formID, now);
+					AddStagTarget(evn->caster, evn->caster->formID, now, false);
 					ProcessStagger(now);
 				}
 			}

@@ -19,6 +19,7 @@ struct GCConfig
 	int		immunityFromDeflect;	// a imunidade comeca no deflect (1) ou so quando o golpe de counter comeca (0)
 	int		staggerOn;				// stagger forcado no inimigo atingido
 	int		staggerDeflectedOn;		// stagger forcado tambem no inimigo do deflect, mesmo que o golpe nao o atinja
+	int		staggerOnDeflect;		// stagger ja no deflect (corta o golpe seguinte do inimigo), sem esperar pelo ataque
 	int		staggerDelayMs;			// quanto depois do golpe comecar (inimigo do deflect)
 	int		staggerRepeatMs;		// volta a staggerar de X em X ms enquanto o golpe dura (0 = so uma vez)
 	float	staggerMagnitude;		// 0.2 pequeno ... 1.0 maximo

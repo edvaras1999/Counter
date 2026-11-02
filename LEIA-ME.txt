@@ -1,3 +1,30 @@
+GUARD COUNTERS LE - VERSAO 0.4.2
+
+O QUE O LOG DA 0.4.1 MOSTROU
+ - Stagger: 5 aceites e 11 recusados. O grafo de animacao do inimigo recusa o evento staggerStart quando ele ja esta numa reaccao
+   (a recuada do deflect do Inpa, um stagger anterior). A 1a tentativa foi aceite 3 de 5 vezes; as repeticoes de 800 ms so 2 de 11.
+   Por isso "falha por vezes". Um inimigo "nao vivo (life state 1)" tambem recusa: estava a morrer.
+ - Parries seguidos: nas janelas de counter ha por vezes varios hits ao jogador do MESMO inimigo (0008009E), sem bloqueio
+   (flags 0x00), a cada 140-200 ms, 3 a 6 eventos. Numa janela chegaram dois eventos no mesmo milissegundo (flags 0xB0).
+   O Guard Counters NAO toca nenhuma animacao nem som de parry; so le estes eventos. Ver a explicacao no chat.
+
+O QUE MUDOU NA 0.4.2
+ 1. O stagger recusado volta a ser tentado de 100 em 100 ms (ate 40 vezes) ate ser aceite; depois de aceite repete de StaggerRepeatMs em
+    StaggerRepeatMs. Assim o inimigo entra no stagger pesado logo que a recuada do deflect acaba, em vez de esperar 800 ms.
+ 2. NOVO (opcional, desligado): "Stagger logo no deflect" (StaggerOnDeflect). Faz cambalear o inimigo do deflect no instante do deflect,
+    o que corta o golpe seguinte dele (e os hits repetidos que o jogador, imune, leva). Experimente ligar.
+ 3. Diagnostico: o log diz quantos ms passaram desde o deflect anterior ("deflect detected (... ms since the previous deflect)"),
+    cada stagger aceite ("accepted (... after N rejected tries)") e um resumo por counter ("stagger summary - accepted X, rejected Y").
+
+EXPERIENCIA PARA PERCEBER OS PARRIES SEGUIDOS
+ No menu (Combate): desligue "Imunidade desde o deflect" e faca 5-10 deflects. Se os parries duplos desaparecerem, a causa e a
+ imunidade desde o deflect (o inimigo continua a "acertar" num jogador imune e o Inpa reage a cada evento). Depois ligue "Stagger logo
+ no deflect" com a imunidade desde o deflect ligada e veja se corta os golpes repetidos.
+
+FICHEIROS: guardcounters-le\Counter.cpp, Options.cpp, Options.h, GuardCountersLE.cpp (DLL); papyrus\src\GuardCountersMCM.psc (script);
+ GuardCounters.ini; LEIA-ME.txt.
+
+------------------------------------------------------------------------------------------------------------------------
 GUARD COUNTERS LE - VERSAO 0.4.1 (correcao a partir do teste da 0.4)
 
 O QUE O LOG DA 0.4 MOSTROU
