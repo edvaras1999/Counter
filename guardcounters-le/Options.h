@@ -20,6 +20,7 @@ struct GCConfig
 	int		staggerOn;				// stagger forcado no inimigo atingido
 	int		staggerDeflectedOn;		// stagger forcado tambem no inimigo do deflect, mesmo que o golpe nao o atinja
 	int		staggerDelayMs;			// quanto depois do golpe comecar (inimigo do deflect)
+	int		staggerRepeatMs;		// volta a staggerar de X em X ms enquanto o golpe dura (0 = so uma vez)
 	float	staggerMagnitude;		// 0.2 pequeno ... 1.0 maximo
 	int		damagePercent;			// dano do counter em % (100 = normal)
 	int		slowTimeOn;				// abrandar o tempo durante o golpe de counter (opcional)

@@ -23,10 +23,7 @@ Event OnInit()
 EndEvent
 
 Event OnGuardCountersEvent(string a_eventName, string a_what, float a_value, Form a_sender)
-    if evtSeen < 4
-        evtSeen += 1
-        Debug.Trace("GuardCountersFX: event '" + a_what + "' received")
-    endIf
+    Debug.Trace("GuardCountersFX: event '" + a_what + "' received")
     Actor pl = Game.GetPlayer()
 
     if a_what == "ready"
@@ -100,6 +97,7 @@ Function GrantGhost(Actor pl)
         pl.SetGhost(true)
     endIf
     ghostOn = true
+    Debug.Trace("GuardCountersFX: immunity on (ghost = " + (pl.IsGhost() as string) + ")")
 EndFunction
 
 Function ReleaseGhost(Actor pl)
@@ -120,6 +118,7 @@ Function ShowMark(Actor pl)
     endIf
     markSpell.Cast(pl, pl)
     markShown = true
+    Debug.Trace("GuardCountersFX: mark cast on the player")
 EndFunction
 
 Function HideMark(Actor pl)
@@ -180,6 +179,7 @@ Function PlayCounterSound(int which, int volumePercent)
         v = 1.0
     endIf
     int h = s.Play(pl)
+    Debug.Trace("GuardCountersFX: sound " + (which as string) + " played, instance " + (h as string))
     if h != 0
         Sound.SetInstanceVolume(h, v)
     endIf

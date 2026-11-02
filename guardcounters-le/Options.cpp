@@ -37,7 +37,8 @@ namespace
 		{ "Combat",		"ImmunityFromDeflect",	'i', &g_cfg.immunityFromDeflect,1.0f,	0.0f,	1.0f },
 		{ "Combat",		"ForcedStagger",		'i', &g_cfg.staggerOn,			1.0f,	0.0f,	1.0f },
 		{ "Combat",		"StaggerDeflectedEnemy",'i', &g_cfg.staggerDeflectedOn,	1.0f,	0.0f,	1.0f },
-		{ "Combat",		"StaggerDelayMs",		'i', &g_cfg.staggerDelayMs,		250.0f,	0.0f,	1500.0f },
+		{ "Combat",		"StaggerDelayMs",		'i', &g_cfg.staggerDelayMs,		0.0f,	0.0f,	1500.0f },
+		{ "Combat",		"StaggerRepeatMs",		'i', &g_cfg.staggerRepeatMs,	800.0f,	0.0f,	3000.0f },
 		{ "Combat",		"StaggerMagnitude",		'f', &g_cfg.staggerMagnitude,	1.0f,	0.2f,	1.0f },
 		{ "Combat",		"CounterDamagePercent",	'i', &g_cfg.damagePercent,		100.0f,	0.0f,	300.0f },
 		{ "Combat",		"SlowTime",				'i', &g_cfg.slowTimeOn,			0.0f,	0.0f,	1.0f },
@@ -250,9 +251,9 @@ namespace Options
 		_MESSAGE("options: window %.2f s, cooldown %.2f s, stamina %s %.1f, armed hold %.2f s, block grace %.2f s",
 				 (double)g_cfg.windowSeconds, (double)g_cfg.cooldownSeconds, g_cfg.staminaOn ? "on" : "off", (double)g_cfg.staminaCost,
 				 (double)g_cfg.armedHoldSeconds, (double)g_cfg.blockGraceSeconds);
-		_MESSAGE("options: immunity %d (from the deflect %d), super armor %d, forced stagger %d (%.2f; deflected enemy %d after %d ms), counter damage %d%%, slow time %d (%.1f s)",
+		_MESSAGE("options: immunity %d (from the deflect %d), super armor %d, forced stagger %d (%.2f; deflected enemy %d after %d ms, repeat %d ms), counter damage %d%%, slow time %d (%.1f s)",
 				 g_cfg.immunityOn, g_cfg.immunityFromDeflect, g_cfg.superArmorOn, g_cfg.staggerOn, (double)g_cfg.staggerMagnitude,
-				 g_cfg.staggerDeflectedOn, g_cfg.staggerDelayMs, g_cfg.damagePercent, g_cfg.slowTimeOn, (double)g_cfg.slowTimeSeconds);
+				 g_cfg.staggerDeflectedOn, g_cfg.staggerDelayMs, g_cfg.staggerRepeatMs, g_cfg.damagePercent, g_cfg.slowTimeOn, (double)g_cfg.slowTimeSeconds);
 		_MESSAGE("options: mark %d, ready sound %d (%d%%), swing sound %d (%d%%), min swing %.1f s",
 				 g_cfg.markOn, g_cfg.readySoundOn, g_cfg.readySoundVolume, g_cfg.swingSoundOn, g_cfg.swingSoundVolume, (double)g_cfg.minSwingSeconds);
 		_MESSAGE("options: deflect variable '%s', require blocking %d, require weapon drawn %d, verbose %d, signal %s (actor value %d)",

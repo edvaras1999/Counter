@@ -1,3 +1,42 @@
+GUARD COUNTERS LE - VERSAO 0.4.1 (correcao a partir do teste da 0.4)
+
+O QUE O LOG DA 0.4 MOSTROU
+ - A imunidade funciona.
+ - So houve um counter usado. O golpe apanhou o inimigo (hit as 1,5 s depois do ataque), mas NAO houve stagger e nao ha
+   nenhuma linha "forced stagger": o codigo saia por uma verificacao interna sem deixar rasto no log. O stagger "do inimigo do
+   deflect" a 250 ms tambem nao chegou a correr, pela mesma razao.
+ - O estado de ataque do jogo faz 0->1->0->1->2->3->0 ao longo de 2,5 s: o golpe de counter dura muito mais do que eu supunha,
+   e um inimigo que se recupera, bloqueia ou ataca antes disso estraga o counter.
+ - Os "flags" dos hits tem lixo nos bytes altos (0x257fd289...): so o byte baixo conta (0x89 = poder + bloqueado). Corrigido.
+
+O QUE MUDOU NA 0.4.1
+ 1. STAGGER PESADO IMEDIATO E REPETIDO. O inimigo do deflect leva o stagger logo quando carrega em atacar (StaggerDelayMs=0), e
+    o stagger e REAPLICADO de 800 em 800 ms (StaggerRepeatMs) enquanto o golpe de counter dura, para o inimigo nao recuperar,
+    bloquear nem atacar antes de o counter acabar. Vale tambem para os inimigos que o golpe atinge e para os que atacam o
+    jogador durante o golpe (levam o stagger no instante em que acertam/tentam acertar).
+ 2. Cada recusa do stagger (inimigo invalido, morto, nao e personagem) fica agora no log com o motivo.
+ 3. Os hits do log trazem os milissegundos desde o ataque e so o byte de flags.
+ 4. Menu: novo controlo "Manter o stagger a cada" (0 = so uma vez).
+ 5. Papyrus.0.log: cada evento, a marca lancada, o som tocado e a imunidade ligada passam a deixar linha.
+
+SOBRE "2 GOLPES EM 1"
+ Nao consegui descobrir a causa com este log. Nos hits do log aparecem dois eventos seguidos do mesmo inimigo (flags 0x00), que
+ podem ser dois golpes do inimigo ou o mesmo golpe registado duas vezes. A 0.4.1 regista o tempo de cada um; com isso vejo se
+ sao dois golpes diferentes ou o mesmo.
+
+SOBRE A MARCA E O SLOW TIME
+ O log da DLL nao diz se a marca apareceu: isso so o Papyrus.0.log mostra. Se a marca falhar, preciso desse log (ver abaixo).
+ O abrandar o tempo fica opcional e desligado; se nao funcionar, ignora-se.
+
+PARA O PAPYRUS.0.LOG EXISTIR: no Skyrim.ini (Documentos\My Games\Skyrim) a seccao [Papyrus] deve ter bEnableLogging=1,
+ bEnableTrace=1 e bLoadDebugInformation=1. O ficheiro fica em Documentos\My Games\Skyrim\Logs\Script\Papyrus.0.log.
+ Procure "GuardCounters".
+
+FICHEIROS DESTA ENTREGA: guardcounters-le\Counter.cpp, Options.cpp, Options.h, GuardCountersLE.cpp (compilar a DLL);
+ papyrus\src\GuardCountersFX.psc e GuardCountersMCM.psc (compilar os scripts); GuardCounters.ini; LEIA-ME.txt.
+ O ESP, as texturas e o modelo nao mudaram.
+
+------------------------------------------------------------------------------------------------------------------------
 GUARD COUNTERS LE - VERSAO 0.4
 Backport do mod "Guard Counters for BFCO and MCO" (SE, Nexus 185368) para o Skyrim LE: so MCO, com o Inpa Sekiro,
 o Themis (OAR/DAR/BDI do LE) e o SkyUI (menu).
